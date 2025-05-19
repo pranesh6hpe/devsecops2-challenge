@@ -1,42 +1,66 @@
-pipeline {
-  agent { label 'kubernetes' }     // uses the K8s cloud you configured
+/**
+ * CI/CD for “my-app”
+ * – Agents run in the K8s cloud (namespace = dev)
+ * – Builds a Java 21 / Maven project
+ * – Publishes Docker image to Nexus
+ * – Deploys to dev namespace, then promotes to pods (prod) on main
+ */
 
+pipeline {
+  /*-----------------------------------------------------------------------
+   * 1 · Agent – any pod with the label ‘kubernetes’ in the dev namespace
+   ----------------------------------------------------------------------/
+  agent { label 'kubernetes' }
+
+  /*-----------------------------------------------------------------------
+   * 2 · Global environment
+   ----------------------------------------------------------------------/
   environment {
-    REGISTRY = '10.25.157.175:32003'       // Nexus NodePort
-    IMAGE    = "${REGISTRY}/dev/my-app:${env.BUILD_NUMBER}"
+    REGISTRY   = '10.25.157.175:32003'                 // Nexus Docker repo
+    IMAGE      = "${REGISTRY}/dev/my-app:${env.BUILD_NUMBER}"
+    DEV_NS     = 'dev'
+    PROD_NS    = 'pods'                                // change if needed
+    SONAR_HOST_URL = 'http://10.25.157.175:32005'      // Sonar NodePort
   }
 
+  /*-----------------------------------------------------------------------
+   * 3 · Stages
+   ----------------------------------------------------------------------/
   stages {
+
     stage('Checkout') {
       steps {
-        checkout scm     // plugin injects git-https PAT automatically
+        checkout scm                                     // Git PAT handled by git-https
       }
     }
-stage('Build & Test') {
-  steps {
-    sh 'mvn -B clean verify'
-  }
-}
+
+    stage('Build & Test') {
+      steps {
+        sh 'mvn -B clean verify'                         // compiles + unit tests + JaCoCo
+      }
+    }
 
     stage('SonarQube Scan') {
-      environment {
-        SONAR_HOST_URL = 'http://10.25.157.175:32005'   // Sonar NodePort
-      }
       steps {
-        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-          sh 'sonar-scanner -Dsonar.login=$SONAR_TOKEN'
+        withCredentials([string(credentialsId: 'sonar-token',
+                                variable: 'SONAR_TOKEN')]) {
+          sh '''
+            sonar-scanner                            \
+              -Dsonar.login=$SONAR_TOKEN             \
+              -Dsonar.projectVersion=$BUILD_NUMBER
+          '''
         }
       }
     }
 
-    stage('Build & Push') {
+    stage('Build & Push Image') {
       steps {
         script {
-          docker.build('my-app')          // Dockerfile in repo
+          docker.build('my-app')                        // creates local image my-app:latest
         }
         withCredentials([usernamePassword(credentialsId: 'docker-cred',
-                          usernameVariable: 'DOCKER_USER',
-                          passwordVariable: 'DOCKER_PASS')]) {
+                                          usernameVariable: 'DOCKER_USER',
+                                          passwordVariable: 'DOCKER_PASS')]) {
           sh '''
             echo "$DOCKER_PASS" | docker login $REGISTRY -u $DOCKER_USER --password-stdin
             docker tag my-app $IMAGE
@@ -48,14 +72,44 @@ stage('Build & Test') {
 
     stage('Deploy to dev') {
       steps {
-        withCredentials([file(credentialsId: 'ci-jenkins-kubeconfig', variable: 'KUBECONF')]) {
+        withCredentials([file(credentialsId: 'ci-jenkins-kubeconfig',
+                              variable: 'KUBECONF')]) {
           sh '''
             export KUBECONFIG=$KUBECONF
-            kubectl -n dev set image deployment/my-app my-app=$IMAGE --record
+            kubectl -n $DEV_NS set image deployment/my-app my-app=$IMAGE --record
+            kubectl -n $DEV_NS rollout status deployment/my-app
           '''
         }
       }
     }
 
+    stage('Promote to pods') {
+      when { branch 'main' }                            // promote only from main
+      steps {
+        withCredentials([file(credentialsId: 'ci-jenkins-kubeconfig',
+                              variable: 'KUBECONF')]) {
+          sh '''
+            export KUBECONFIG=$KUBECONF
+            kubectl -n $PROD_NS set image deployment/my-app my-app=$IMAGE --record
+            kubectl -n $PROD_NS rollout status deployment/my-app
+          '''
+        }
+      }
+    }
+  }
+
+  /*-----------------------------------------------------------------------
+   * 4 · Post actions
+   ----------------------------------------------------------------------/
+  post {
+    always {
+      junit 'target/surefire-reports/*.xml'             // surface test results
+    }
+    success {
+      echo '🎉  Pipeline completed successfully!'
+    }
+    failure {
+      echo '🚨  Pipeline failed — check above logs.'
+    }
   }
 }
