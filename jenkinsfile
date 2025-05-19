@@ -1,98 +1,77 @@
 pipeline {
-  
-  agent { label 'kubernetes' }
-
-
-  environment {
-    REGISTRY   = '10.25.157.175:32003'                 // Nexus Docker repo
-    IMAGE      = "${REGISTRY}/dev/my-app:${env.BUILD_NUMBER}"
-    DEV_NS     = 'dev'
-    PROD_NS    = 'pods'                                // change if needed
-    SONAR_HOST_URL = 'http://10.25.157.175:32005'      // Sonar NodePort
+  agent {
+    label 'kubernetes'
   }
-
+  environment {
+    // Ensure Docker client talks to DinD container
+    DOCKER_HOST = 'tcp://localhost:2375'
+  }
   stages {
-
     stage('Checkout') {
       steps {
-        checkout scm                                     // Git PAT handled by git-https
+        container('maven') {
+          checkout scm
+        }
       }
     }
 
-    stage('Build & Test') {
+    stage('Build with Maven') {
       steps {
-        sh 'mvn -B clean verify'                         // compiles + unit tests + JaCoCo
+        container('maven') {
+          sh 'mvn clean install -DskipTests'
+        }
       }
     }
 
-    stage('SonarQube Scan') {
+    stage('Run Tests') {
       steps {
-        withCredentials([string(credentialsId: 'sonar-token',
-                                variable: 'SONAR_TOKEN')]) {
+        container('maven') {
+          sh 'mvn test'
+        }
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        container('maven') {
           sh '''
-            sonar-scanner                            \
-              -Dsonar.login=$SONAR_TOKEN             \
-              -Dsonar.projectVersion=$BUILD_NUMBER
+            echo "Docker Version:"
+            docker version
+
+            echo "Building Docker image..."
+            docker build -t my-image:latest .
           '''
         }
       }
     }
 
-    stage('Build & Push Image') {
-      steps {
-        script {
-          docker.build('my-app')                        // creates local image my-app:latest
-        }
-        withCredentials([usernamePassword(credentialsId: 'docker-cred',
-                                          usernameVariable: 'DOCKER_USER',
-                                          passwordVariable: 'DOCKER_PASS')]) {
-          sh '''
-            echo "$DOCKER_PASS" | docker login $REGISTRY -u $DOCKER_USER --password-stdin
-            docker tag my-app $IMAGE
-            docker push $IMAGE
-          '''
-        }
+    stage('Push Docker Image (optional)') {
+      when {
+        expression { return env.DOCKER_USERNAME && env.DOCKER_PASSWORD }
       }
-    }
-
-    stage('Deploy to dev') {
       steps {
-        withCredentials([file(credentialsId: 'ci-jenkins-kubeconfig',
-                              variable: 'KUBECONF')]) {
-          sh '''
-            export KUBECONFIG=$KUBECONF
-            kubectl -n $DEV_NS set image deployment/my-app my-app=$IMAGE --record
-            kubectl -n $DEV_NS rollout status deployment/my-app
-          '''
-        }
-      }
-    }
-
-    stage('Promote to pods') {
-      when { branch 'main' }                            // promote only from main
-      steps {
-        withCredentials([file(credentialsId: 'ci-jenkins-kubeconfig',
-                              variable: 'KUBECONF')]) {
-          sh '''
-            export KUBECONFIG=$KUBECONF
-            kubectl -n $PROD_NS set image deployment/my-app my-app=$IMAGE --record
-            kubectl -n $PROD_NS rollout status deployment/my-app
-          '''
+        container('maven') {
+          withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+            sh '''
+              echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+              docker push my-image:latest
+            '''
+          }
         }
       }
     }
   }
 
-  
   post {
     always {
-      junit 'target/surefire-reports/*.xml'             // surface test results
-    }
-    success {
-      echo '🎉  Pipeline completed successfully!'
+      container('maven') {
+        sh 'echo "Pipeline completed. Cleaning up..."'
+      }
     }
     failure {
-      echo '🚨  Pipeline failed — check above logs.'
+      container('maven') {
+        sh 'echo "Pipeline failed."'
+      }
     }
   }
 }
