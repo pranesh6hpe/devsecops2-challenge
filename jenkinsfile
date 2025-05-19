@@ -1,7 +1,7 @@
 pipeline {
-  agent{
-label 'kubernetes'
-}
+  agent {
+    label 'kubernetes'
+  }
   environment {
     // Ensure Docker client talks to DinD container
     DOCKER_HOST = 'tcp://localhost:2375'
@@ -33,7 +33,7 @@ label 'kubernetes'
 
     stage('Docker Build') {
       steps {
-        container('maven') {
+        container('dind') {
           sh '''
             echo "Docker Version:"
             docker version
@@ -50,7 +50,7 @@ label 'kubernetes'
         expression { return env.DOCKER_USERNAME && env.DOCKER_PASSWORD }
       }
       steps {
-        container('maven') {
+        container('dind') {
           withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
             sh '''
               echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
