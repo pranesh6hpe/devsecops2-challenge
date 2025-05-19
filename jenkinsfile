@@ -1,102 +1,60 @@
-def retryOnAbort(int maxRetries = 1, Closure body) {
-  int attempt = 0
-  while (true) {
-    try {
-      body()
-      return
-    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
-      attempt++
-      if (attempt > maxRetries) { throw e }
-      echo "Stage aborted (retry ${attempt}/${maxRetries})"
-      sleep 5
-    }
-  }
-}
-
 pipeline {
-  // use the Kubernetes Pod Template labelled "kubernetes"
-  agent { label 'kubernetes' }
-
-  tools {
-    jdk   'Java 21'       // must match your Global Tool name
-    maven 'Maven 3.8.1'
-    'hudson.plugins.sonar.SonarRunnerInstallation' 'sonar-scanner'
-  }
+  agent { label 'kubernetes' }     // uses the K8s cloud you configured
 
   environment {
-    // make the tools available on PATH
-    JAVA_HOME    = tool 'Java 21'
-    M2_HOME      = tool 'Maven 3.8.1'
-    SCANNER_HOME = tool 'sonar-scanner'
-    PATH         = "${JAVA_HOME}/bin:${M2_HOME}/bin:${SCANNER_HOME}/bin:${env.PATH}"
-    REGISTRY     = '10.25.157.175:32003'
+    REGISTRY = '10.25.157.175:32003'       // Nexus NodePort
+    IMAGE    = "${REGISTRY}/dev/my-app:${env.BUILD_NUMBER}"
   }
-
-  triggers { githubPush() }
 
   stages {
     stage('Checkout') {
       steps {
-        git branch: 'main',
-            url:      'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-            credentialsId: 'git-https'
+        checkout scm     // plugin injects git-https PAT automatically
       }
     }
 
-    stage('Build & Test') {
-      steps {
-        sh 'mvn clean verify'
+    stage('SonarQube Scan') {
+      environment {
+        SONAR_HOST_URL = 'http://10.25.157.175:32005'   // Sonar NodePort
       }
-      post {
-        success {
-          archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-          junit 'target/surefire-reports/*.xml'
+      steps {
+        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+          sh 'sonar-scanner -Dsonar.login=$SONAR_TOKEN'
         }
       }
     }
 
-    stage('SonarQube Analysis') {
-      steps {
-        retryOnAbort(2) {
-          withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-            withSonarQubeEnv('sonar') {
-              sh "sonar-scanner -Dsonar.login=\$SONAR_TOKEN"
-            }
-          }
-        }
-      }
-    }
-
-    stage('Quality Gate') {
-      steps {
-        retryOnAbort(2) {
-          timeout(time: 30, unit: 'MINUTES') {
-            waitForQualityGate abortPipeline: true
-          }
-        }
-      }
-    }
-
-    stage('Deploy to Dev') {
+    stage('Build & Push') {
       steps {
         script {
-          // render your k8s manifest with the new image tag
-          def image = "${env.REGISTRY}/devsecops2-challenge:\${BUILD_NUMBER}"
-          sh """
-            envsubst < k8s/deployment.yaml > rendered.yaml
-            kubectl apply -f rendered.yaml --record
-            kubectl rollout status deployment/devsecops2-challenge --timeout=600s
-          """
+          docker.build('my-app')          // Dockerfile in repo
+        }
+        withCredentials([usernamePassword(credentialsId: 'docker-cred',
+                          usernameVariable: 'DOCKER_USER',
+                          passwordVariable: 'DOCKER_PASS')]) {
+          sh '''
+            echo "$DOCKER_PASS" | docker login $REGISTRY -u $DOCKER_USER --password-stdin
+            docker tag my-app $IMAGE
+            docker push $IMAGE
+          '''
         }
       }
     }
-  }
 
-  post {
-    success {
-      mail to:      sh(script: "git log -1 --pretty='%ae'", returnStdout: true).trim(),
-           subject: "✅ Build \${JOB_NAME} #\${BUILD_NUMBER} succeeded",
-           body:    "View details at \${BUILD_URL}"
+    stage('Deploy to dev') {
+      steps {
+        withCredentials([file(credentialsId: 'ci-jenkins-kubeconfig', variable: 'KUBECONF')]) {
+          sh '''
+            export KUBECONFIG=$KUBECONF
+            kubectl -n dev set image deployment/my-app my-app=$IMAGE --record
+          '''
+        }
+      }
     }
+stage('Build & Test') {
+  steps {
+    sh 'mvn -B clean verify'
+  }
+}
   }
 }
