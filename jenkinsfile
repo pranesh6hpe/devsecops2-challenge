@@ -1,5 +1,7 @@
 pipeline {
-  agent any
+  agent{
+label 'kubernetes'
+}
   environment {
     // Ensure Docker client talks to DinD container
     DOCKER_HOST = 'tcp://localhost:2375'
