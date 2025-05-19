@@ -16,7 +16,7 @@ def retryOnAbort(int maxRetries = 1, Closure body) {
 }
 
 pipeline {
-    agent any
+    agent { label : 'kubernetes' }
 
     tools {
         jdk   'Java 21'
