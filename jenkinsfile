@@ -12,6 +12,11 @@ pipeline {
         checkout scm     // plugin injects git-https PAT automatically
       }
     }
+stage('Build & Test') {
+  steps {
+    sh 'mvn -B clean verify'
+  }
+}
 
     stage('SonarQube Scan') {
       environment {
@@ -51,10 +56,6 @@ pipeline {
         }
       }
     }
-stage('Build & Test') {
-  steps {
-    sh 'mvn -B clean verify'
-  }
-}
+
   }
 }
