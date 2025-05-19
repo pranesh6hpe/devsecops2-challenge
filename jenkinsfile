@@ -20,7 +20,7 @@ pipeline {
   tools {
     jdk   'Java 21'       // must match your Global Tool name
     maven 'Maven 3.8.1'
-    sonarScanner 'sonar-scanner'
+    sonarRunner 'sonar-scanner'
   }
 
   environment {
