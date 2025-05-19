@@ -1,20 +1,8 @@
-/**
- * CI/CD for “my-app”
- * – Agents run in the K8s cloud (namespace = dev)
- * – Builds a Java 21 / Maven project
- * – Publishes Docker image to Nexus
- * – Deploys to dev namespace, then promotes to pods (prod) on main
- */
-
 pipeline {
-  /*-----------------------------------------------------------------------
-   * 1 · Agent – any pod with the label ‘kubernetes’ in the dev namespace
-   ----------------------------------------------------------------------/
+  
   agent { label 'kubernetes' }
 
-  /*-----------------------------------------------------------------------
-   * 2 · Global environment
-   ----------------------------------------------------------------------/
+
   environment {
     REGISTRY   = '10.25.157.175:32003'                 // Nexus Docker repo
     IMAGE      = "${REGISTRY}/dev/my-app:${env.BUILD_NUMBER}"
@@ -23,9 +11,6 @@ pipeline {
     SONAR_HOST_URL = 'http://10.25.157.175:32005'      // Sonar NodePort
   }
 
-  /*-----------------------------------------------------------------------
-   * 3 · Stages
-   ----------------------------------------------------------------------/
   stages {
 
     stage('Checkout') {
@@ -98,9 +83,7 @@ pipeline {
     }
   }
 
-  /*-----------------------------------------------------------------------
-   * 4 · Post actions
-   ----------------------------------------------------------------------/
+  
   post {
     always {
       junit 'target/surefire-reports/*.xml'             // surface test results
