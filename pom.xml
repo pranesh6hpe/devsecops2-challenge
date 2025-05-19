@@ -1,93 +1,86 @@
 <!-- pom.xml -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="
-           http://maven.apache.org/POM/4.0.0
-           http://maven.apache.org/xsd/maven-4.0.0.xsd">
-
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
+
+  <!-- ===== Project coordinates ===== -->
   <groupId>com.example</groupId>
   <artifactId>my-app</artifactId>
-  <version>1.0.1</version>
+  <version>1.0.${revision}</version>
   <packaging>jar</packaging>
 
+  <!-- ===== Global properties ===== -->
   <properties>
-    <!-- compile against Java 21 -->
-    <maven.compiler.source>21</maven.compiler.source>
-    <maven.compiler.target>21</maven.compiler.target>
-    <!-- JUnit 5 -->
-    <junit.jupiter.version>5.10.0</junit.jupiter.version>
-    <!-- JaCoCo for coverage -->
-    <jacoco.version>0.8.10</jacoco.version>
+    <maven.compiler.release>21</maven.compiler.release>   <!-- Java 21 -->
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <revision>SNAPSHOT</revision>                         <!-- overridden by CI if desired -->
   </properties>
 
+  <!-- ===== Dependencies ===== -->
   <dependencies>
-    <!-- JUnit Jupiter API & Engine -->
+    <!-- Example runtime stack -->
     <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-api</artifactId>
-      <version>${junit.jupiter.version}</version>
-      <scope>test</scope>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+      <version>3.2.5</version>
     </dependency>
+
+    <!-- JUnit 5 for tests -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-engine</artifactId>
-      <version>${junit.jupiter.version}</version>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
 
+  <!-- ===== Build plugins ===== -->
   <build>
-    <finalName>my-app-${project.version}</finalName>
-
     <plugins>
-      <!-- Compiles Java 21 -->
+      <!-- Compiler -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.11.0</version>
-        <configuration>
-          <release>21</release>
-        </configuration>
       </plugin>
 
-      <!-- Runs unit tests -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.1.2</version>
-        <configuration>
-          <useModulePath>false</useModulePath>
-        </configuration>
-      </plugin>
-
-      <!-- Code coverage -->
+      <!-- JaCoCo for coverage (required by Sonar) -->
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
-        <version>${jacoco.version}</version>
+        <version>0.8.11</version>
         <executions>
-          <execution>
+          <execution>            <!-- adds agent -->
             <goals><goal>prepare-agent</goal></goals>
           </execution>
-          <execution>
+          <execution>            <!-- generates report -->
             <id>report</id>
             <phase>test</phase>
             <goals><goal>report</goal></goals>
           </execution>
         </executions>
       </plugin>
+
+      <!-- Spring Boot re-package (optional) -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>3.2.5</version>
+      </plugin>
     </plugins>
   </build>
 
+  <!-- ===== Where Maven deploys artefacts ===== -->
   <distributionManagement>
-    <repository>
-      <id>nexus-releases</id>
-      <url>http://10.25.157.175:32003/repository/maven-releases/</url>
-    </repository>
     <snapshotRepository>
       <id>nexus-snapshots</id>
       <url>http://10.25.157.175:32003/repository/maven-snapshots/</url>
     </snapshotRepository>
+    <repository>
+      <id>nexus-releases</id>
+      <url>http://10.25.157.175:32003/repository/maven-releases/</url>
+    </repository>
   </distributionManagement>
 </project>
