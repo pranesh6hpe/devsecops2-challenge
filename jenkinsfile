@@ -1,89 +1,186 @@
+def retryOnAbort(int maxRetries = 1, Closure body) {
+    int attempt = 0
+    while (true) {
+        try {
+            body()
+            return
+        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+            attempt++
+            if (attempt > maxRetries) {
+                throw e
+            }
+            echo "Stage aborted (attempt ${attempt}/${maxRetries}) – retrying after 5 s"
+            sleep time: 5, unit: 'SECONDS'
+        }
+    }
+}
+
 pipeline {
-  agent {
-    label 'kubernetes' // Ensure it matches the label of your pod template in Jenkins UI
-  }
-  environment {
-    // Use DinD
-    DOCKER_HOST = 'tcp://localhost:2375'
-  }
-  stages {
-    stage('Checkout') {
-      steps {
-        container('maven') {
-          checkout scm
-        }
-      }
+    agent {
+        label 'kubernetes' // Ensure this matches Jenkins pod template label
     }
 
-    stage('Build with Maven') {
-      steps {
-        container('maven') {
-          sh 'mvn clean install -DskipTests'
-        }
-      }
+    environment {
+        DOCKER_HOST = 'tcp://localhost:2375'
     }
 
-    stage('Run Tests') {
-      steps {
-        container('maven') {
-          sh 'mvn test'
+    stages {
+        stage('Checkout') {
+            steps {
+                container('maven') {
+                    checkout scm
+                }
+            }
         }
-      }
+
+        stage('Build Application') {
+            steps {
+                container('maven') {
+                    retryOnAbort(2) {
+                        sh 'mvn clean verify'
+                    }
+                }
+            }
+            post {
+                success {
+                    container('maven') {
+                        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    }
+                }
+            }
+        }
+
+        stage('Prepare Docker Context') {
+            steps {
+                container('maven') {
+                    sh '''
+                        echo "Preparing Docker context..."
+                        mkdir -p docker-context
+                        cp target/*.jar docker-context/app.jar
+                        cp Dockerfile docker-context/
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                container('maven') {
+                    dir('docker-context') {
+                        retryOnAbort(2) {
+                            sh '''
+                                echo "Building Docker image..."
+                                docker build -t my-image:latest .
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Push Docker Image (optional)') {
+            when {
+                expression { return env.DOCKER_USERNAME && env.DOCKER_PASSWORD }
+            }
+            steps {
+                container('maven') {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        retryOnAbort(2) {
+                            sh '''
+                                echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+                                docker push my-image:latest
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Container Scanning') {
+            agent { label 'trivy' }
+            steps {
+                container('trivy') {
+                    retryOnAbort(1) {
+                        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'IGNORED')]) {
+                            sh '''
+                                CACHE_DIR="$HOME/.trivy-cache"
+                                mkdir -p "$CACHE_DIR"
+                                trivy image \
+                                  --download-db-only \
+                                  --cache-dir "$CACHE_DIR"
+
+                                trivy image \
+                                  --cache-dir "$CACHE_DIR" \
+                                  --timeout 30m \
+                                  --exit-code 1 \
+                                  --severity HIGH,CRITICAL \
+                                  --format table \
+                                  -o trivy.txt \
+                                  ${DOCKER_USER}/my-image:latest
+                            '''
+                        }
+                    }
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy.txt', fingerprint: true
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                container('maven') {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'IGNORED')]) {
+                        sh '''
+                            export IMG_TAG="$DOCKER_USER/my-image:latest"
+                            envsubst < /var/lib/jenkins/k8s-manifest/deployment.yaml > rendered-deployment.yaml
+                        '''
+                    }
+                    archiveArtifacts artifacts: 'rendered-deployment.yaml', fingerprint: true
+
+                    withKubeConfig(credentialsId: 'k8s-config') {
+                        retryOnAbort(1) {
+                            sh '''
+                                kubectl apply -f rendered-deployment.yaml --record
+                                kubectl rollout status deployment/my-app --timeout=1200s
+                                echo "Verification Time: $(date '+%Y-%m-%d %H:%M:%S')"
+                                kubectl get pods -l app=my-app \
+                                  -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[*].image,READY:.status.containerStatuses[*].ready,START_TIME:.status.startTime' \
+                                  --no-headers
+                                kubectl get svc
+                            '''
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    stage('Prepare Docker Build Context') {
-      steps {
-        container('maven') {
-          sh '''
-            echo "Renaming built JAR to app.jar..."
-            mkdir -p docker-context
-            cp target/*.jar docker-context/app.jar
-            cp Dockerfile docker-context/
-          '''
+    post {
+        always {
+            container('maven') {
+                junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+            }
         }
-      }
-    }
+        success {
+            container('maven') {
+                script {
+                    def email = sh(script: "git --no-pager show -s --format='%ae'", returnStdout: true).trim()
+                    mail to: email,
+                         subject: "✅ Deployment Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                         body: """\
+Hello,
 
-    stage('Docker Build') {
-      steps {
-        container('maven') {
-          dir('docker-context') {
-            sh '''
-              echo "Building Docker image..."
-              docker build -t my-image:latest .
-            '''
-          }
+Your commit triggered a successful deployment for job '${env.JOB_NAME}' (build #${env.BUILD_NUMBER}).
+
+See details: ${env.BUILD_URL}
+
+Best,\nJenkins CI/CD
+"""
+                }
+            }
         }
-      }
     }
-
-    stage('Push Docker Image (optional)') {
-      when {
-        expression { return env.DOCKER_USERNAME && env.DOCKER_PASSWORD }
-      }
-      steps {
-        container('maven') {
-          withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-            sh '''
-              echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-              docker push my-image:latest
-            '''
-          }
-        }
-      }
-    }
-  }
-
-  post {
-    always {
-      container('maven') {
-        sh 'echo "Pipeline completed. Cleaning up..."'
-      }
-    }
-    failure {
-      container('maven') {
-        sh 'echo "Pipeline failed."'
-      }
-    }
-  }
 }
