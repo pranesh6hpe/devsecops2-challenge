@@ -56,8 +56,13 @@ pipeline {
       }
     }
 
-    stage('Promote to prod?') {
-      when { input message: 'Promote the image to prod?', ok: 'Promote' }
+    stage('Promote to prod') {
+      /* Manual approval panel will pop up in the Build UI.
+         Jenkins waits until you click “Promote”. */
+      input {
+        message 'Promote the image to prod?'
+        ok      'Promote'
+      }
       steps {
         withKubeConfig(credentialsId: "${KUBECONFIG_CRED}") {
           sh """
