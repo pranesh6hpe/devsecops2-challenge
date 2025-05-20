@@ -64,19 +64,10 @@ pipeline {
         }
 
         stage('Build Docker Image') {
-            steps {
-                container('maven') {
-                    dir('docker-context') {
-                        retryOnAbort(2) {
-                            sh '''
-                                echo "Building Docker image..."
-                                docker build -t my-image:latest .
-                            '''
-                        }
-                    }
-                }
-            }
-        }
+  container('docker') {
+    sh 'docker build -t my-image:latest docker-context'
+  }
+}
 
         stage('Push Docker Image (optional)') {
             when {
