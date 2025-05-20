@@ -1,178 +1,72 @@
-def retryOnAbort(int maxRetries = 1, Closure body) {
-    int attempt = 0
-    while (true) {
-        try {
-            body()
-            return
-        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
-            attempt++
-            if (attempt > maxRetries) {
-                throw e
-            }
-            echo "Stage aborted (attempt ${attempt}/${maxRetries}) – retrying after 5 s"
-            sleep time: 5, unit: 'SECONDS'
-        }
-    }
-}
-
 pipeline {
-    agent {
-        label 'kubernetes' // Ensure this matches Jenkins pod template label
+  agent { label 'kubernetes' }
+
+  environment {
+    REGISTRY        = 'gccvedl1205514:32003'           // Nexus Docker repo
+    IMAGE           = "${REGISTRY}/hello-app:${env.BUILD_NUMBER}"
+    KUBECONFIG_CRED = 'k8s-config'                    // Jenkins secret file
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge'
+      }
     }
 
-    environment {
-        DOCKER_HOST = 'tcp://localhost:2375'
+    stage('Build & Unit-test') {
+      steps {
+        sh 'mvn -B clean verify'
+      }
+      post {
+        success { junit 'target/surefire-reports/*.xml' }
+      }
     }
 
-    stages {
-        stage('Checkout') {
-            steps {
-                container('maven') {
-                    checkout scm
-                }
-            }
-        }
-
-        stage('Build Application') {
-            steps {
-                container('maven') {
-                    retryOnAbort(2) {
-                        sh 'mvn clean verify'
-                    }
-                }
-            }
-            post {
-                success {
-                    container('maven') {
-                        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                    }
-                }
-            }
-        }
-
-        stage('Prepare Docker Context') {
-            steps {
-                container('maven') {
-                    sh '''
-                        echo "Preparing Docker context..."
-                        mkdir -p docker-context
-                        cp target/*.jar docker-context/app.jar
-                        cp Dockerfile docker-context/
-                    '''
-                }
-            }
-        }
-
-        stage('Build Docker Image') {
-    steps {
-        container('docker') {
-            sh 'docker build -t my-image:latest docker-context'
-        }
-    }
-}
-        stage('Push Docker Image (optional)') {
-            when {
-                expression { return env.DOCKER_USERNAME && env.DOCKER_PASSWORD }
-            }
-            steps {
-                container('maven') {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        retryOnAbort(2) {
-                            sh '''
-                                echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-                                docker push my-image:latest
-                            '''
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Container Scanning') {
-            agent { label 'trivy' }
-            steps {
-                container('trivy') {
-                    retryOnAbort(1) {
-                        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'IGNORED')]) {
-                            sh '''
-                                CACHE_DIR="$HOME/.trivy-cache"
-                                mkdir -p "$CACHE_DIR"
-                                trivy image \
-                                  --download-db-only \
-                                  --cache-dir "$CACHE_DIR"
-
-                                trivy image \
-                                  --cache-dir "$CACHE_DIR" \
-                                  --timeout 30m \
-                                  --exit-code 1 \
-                                  --severity HIGH,CRITICAL \
-                                  --format table \
-                                  -o trivy.txt \
-                                  ${DOCKER_USER}/my-image:latest
-                            '''
-                        }
-                    }
-                }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'trivy.txt', fingerprint: true
-                }
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                container('maven') {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'IGNORED')]) {
-                        sh '''
-                            export IMG_TAG="$DOCKER_USER/my-image:latest"
-                            envsubst < /var/lib/jenkins/k8s-manifest/deployment.yaml > rendered-deployment.yaml
-                        '''
-                    }
-                    archiveArtifacts artifacts: 'rendered-deployment.yaml', fingerprint: true
-
-                    withKubeConfig(credentialsId: 'k8s-config') {
-                        retryOnAbort(1) {
-                            sh '''
-                                kubectl apply -f rendered-deployment.yaml --record
-                                kubectl rollout status deployment/my-app --timeout=1200s
-                                echo "Verification Time: $(date '+%Y-%m-%d %H:%M:%S')"
-                                kubectl get pods -l app=my-app \
-                                  -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[*].image,READY:.status.containerStatuses[*].ready,START_TIME:.status.startTime' \
-                                  --no-headers
-                                kubectl get svc
-                            '''
-                        }
-                    }
-                }
-            }
-        }
+    stage('Build Container') {
+      steps {
+        sh "docker build -t ${IMAGE} ."
+      }
     }
 
-    post {
-        always {
-            container('maven') {
-                junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
-            }
+    stage('Push to Nexus') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'nexus-cred',
+          usernameVariable: 'NEXUS_USER',
+          passwordVariable: 'NEXUS_PASS'
+        )]) {
+          sh '''
+            echo "${NEXUS_PASS}" | docker login ${REGISTRY} -u "${NEXUS_USER}" --password-stdin
+            docker push ${IMAGE}
+          '''
         }
-        success {
-            container('maven') {
-                script {
-                    def email = sh(script: "git --no-pager show -s --format='%ae'", returnStdout: true).trim()
-                    mail to: email,
-                         subject: "✅ Deployment Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                         body: """\
-Hello,
-
-Your commit triggered a successful deployment for job '${env.JOB_NAME}' (build #${env.BUILD_NUMBER}).
-
-See details: ${env.BUILD_URL}
-
-Best,\nJenkins CI/CD
-"""
-                }
-            }
-        }
+      }
     }
+
+    stage('Deploy to dev') {
+      steps {
+        withKubeConfig(credentialsId: "${KUBECONFIG_CRED}") {
+          sh """
+            kubectl -n dev set image deploy/hello hello=${IMAGE} --record || \
+            kubectl -n dev apply -f k8s/deployment-dev.yaml --record
+            kubectl -n dev rollout status deploy/hello --timeout=300s
+          """
+        }
+      }
+    }
+
+    stage('Promote to prod?') {
+      when { input message: 'Promote the image to prod?', ok: 'Promote' }
+      steps {
+        withKubeConfig(credentialsId: "${KUBECONFIG_CRED}") {
+          sh """
+            kubectl -n prod set image deploy/hello hello=${IMAGE} --record || \
+            kubectl -n prod apply -f k8s/deployment-prod.yaml --record
+            kubectl -n prod rollout status deploy/hello --timeout=300s
+          """
+        }
+      }
+    }
+  }
 }
