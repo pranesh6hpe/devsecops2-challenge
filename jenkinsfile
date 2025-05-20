@@ -64,11 +64,12 @@ pipeline {
         }
 
         stage('Build Docker Image') {
-  container('docker') {
-    sh 'docker build -t my-image:latest docker-context'
-  }
+    steps {
+        container('docker') {
+            sh 'docker build -t my-image:latest docker-context'
+        }
+    }
 }
-
         stage('Push Docker Image (optional)') {
             when {
                 expression { return env.DOCKER_USERNAME && env.DOCKER_PASSWORD }
