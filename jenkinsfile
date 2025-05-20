@@ -1,9 +1,9 @@
 pipeline {
   agent {
-    label 'kubernetes'
+    label 'kubernetes' // Ensure it matches the label of your pod template in Jenkins UI
   }
   environment {
-    // Ensure Docker client talks to DinD container
+    // Use DinD
     DOCKER_HOST = 'tcp://localhost:2375'
   }
   stages {
@@ -31,19 +31,31 @@ pipeline {
       }
     }
 
-    stage('Docker Build') {
+    stage('Prepare Docker Build Context') {
       steps {
         container('maven') {
           sh '''
-            echo "Docker Version:"
-            docker version
-
-            echo "Renaming JAR to app.jar..."
-            cp target/*.jar target/app.jar
-
-            echo "Building Docker image..."
-            docker build -t my-image:latest .
+            echo "Renaming built JAR to app.jar..."
+            mkdir -p docker-context
+            cp target/*.jar docker-context/app.jar
+            cp Dockerfile docker-context/
           '''
+        }
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        container('maven') {
+          dir('docker-context') {
+            sh '''
+              echo "Docker Version:"
+              docker version
+
+              echo "Building Docker image..."
+              docker build -t my-image:latest .
+            '''
+          }
         }
       }
     }
