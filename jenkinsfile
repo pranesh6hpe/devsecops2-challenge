@@ -49,9 +49,6 @@ pipeline {
         container('maven') {
           dir('docker-context') {
             sh '''
-              echo "Docker Version:"
-              docker version
-
               echo "Building Docker image..."
               docker build -t my-image:latest .
             '''
