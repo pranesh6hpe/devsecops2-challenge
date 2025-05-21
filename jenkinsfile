@@ -1,77 +1,105 @@
 pipeline {
-  agent { label 'kubernetes' }
+  agent {
+    kubernetes {
+      defaultContainer 'jnlp'
+      namespace 'devsecops2'
+    }
+  }
 
   environment {
-    REGISTRY        = 'gccvedl1205514:32003'           // Nexus Docker repo
-    IMAGE           = "${REGISTRY}/hello-app:${env.BUILD_NUMBER}"
-    KUBECONFIG_CRED = 'k8s-config'                    // Jenkins secret file
+    // Nexus Docker registry
+    REGISTRY = '10.25.157.175:32003/docker-hosted'
+    // Your application/chart name
+    APP_NAME  = 'devsecops2-challenge'
+    // Short SHA tag for immutability
+    COMMIT    = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+    IMAGE     = "${REGISTRY}/${APP_NAME}:${COMMIT}"
   }
 
   stages {
     stage('Checkout') {
       steps {
-        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge'
+        checkout scm
       }
     }
 
-    stage('Build & Unit-test') {
+    stage('Build & Unit Test') {
       steps {
-        sh 'mvn -B clean verify'
-      }
-      post {
-        success { junit 'target/surefire-reports/*.xml' }
+        // Replace with your actual build command if not Maven
+        sh 'mvn clean verify -DskipITs'
       }
     }
 
-    stage('Build Container') {
+    stage('Static Code Analysis') {
       steps {
-        sh "docker build -t ${IMAGE} ."
+        withSonarQubeEnv('SonarQube') {
+          sh "sonar-scanner -Dsonar.projectKey=${APP_NAME} -Dsonar.sources=."
+        }
       }
     }
 
-    stage('Push to Nexus') {
+    stage('Docker Build & Push') {
       steps {
         withCredentials([usernamePassword(
           credentialsId: 'nexus-cred',
           usernameVariable: 'NEXUS_USER',
-          passwordVariable: 'NEXUS_PASS'
+          passwordVariable: 'NEXUS_PW'
         )]) {
-          sh '''
-            echo "${NEXUS_PASS}" | docker login ${REGISTRY} -u "${NEXUS_USER}" --password-stdin
+          sh """
+            docker build -t ${IMAGE} .
+            echo "${NEXUS_PW}" | docker login --username "${NEXUS_USER}" --password-stdin 10.25.157.175:32003
             docker push ${IMAGE}
-          '''
-        }
-      }
-    }
-
-    stage('Deploy to dev') {
-      steps {
-        withKubeConfig(credentialsId: "${KUBECONFIG_CRED}") {
-          sh """
-            kubectl -n dev set image deploy/hello hello=${IMAGE} --record || \
-            kubectl -n dev apply -f k8s/deployment-dev.yaml --record
-            kubectl -n dev rollout status deploy/hello --timeout=300s
           """
         }
       }
     }
 
-    stage('Promote to prod') {
-      /* Manual approval panel will pop up in the Build UI.
-         Jenkins waits until you click “Promote”. */
-      input {
-        message 'Promote the image to prod?'
-        ok      'Promote'
-      }
+    stage('Trivy Image Scan') {
       steps {
-        withKubeConfig(credentialsId: "${KUBECONFIG_CRED}") {
-          sh """
-            kubectl -n prod set image deploy/hello hello=${IMAGE} --record || \
-            kubectl -n prod apply -f k8s/deployment-prod.yaml --record
-            kubectl -n prod rollout status deploy/hello --timeout=300s
-          """
-        }
+        // Fails the build on HIGH or CRITICAL findings
+        sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${IMAGE}"
       }
+    }
+
+    stage('Deploy to DEV') {
+      steps {
+        sh """
+          helm upgrade --install ${APP_NAME} chart \
+            --namespace dev \
+            --set image.repository=${REGISTRY}/${APP_NAME} \
+            --set image.tag=${COMMIT}
+        """
+      }
+    }
+
+    stage('Smoke Tests') {
+      steps {
+        // Adjust or replace with your smoke-test script
+        sh './scripts/smoke-test.sh'
+      }
+    }
+
+    stage('Promote to PROD') {
+      steps {
+        input message: "Approve promoting ${APP_NAME}:${COMMIT} to PROD?"
+      }
+    }
+
+    stage('Deploy to PROD') {
+      steps {
+        sh """
+          helm upgrade --install ${APP_NAME} chart \
+            --namespace prod \
+            --set image.repository=${REGISTRY}/${APP_NAME} \
+            --set image.tag=${COMMIT}
+        """
+      }
+    }
+  }
+
+  post {
+    always {
+      cleanWs()
     }
   }
 }
