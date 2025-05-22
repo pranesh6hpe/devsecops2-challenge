@@ -1,65 +1,58 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0"
+<project xmlns="http://maven.apache.org/POM/4.0.0" 
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.example</groupId>
-  <artifactId>jetty-hello</artifactId>
-  <version>1.0-SNAPSHOT</version>
-  <packaging>jar</packaging>
+  <groupId>com.yourorg</groupId>
+  <artifactId>devsecops2-challenge</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <name>DevSecOps2 Challenge</name>
+  <description>A simple Java 21 project for your Jenkins pipeline</description>
+  <url>https://github.com/pranesh6hpe/devsecops2-challenge</url>
 
   <properties>
+    <!-- Java version -->
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <surefire.version>3.0.0-M7</surefire.version>
   </properties>
 
   <dependencies>
-    <!-- Jetty Server -->
+    <!-- Example: JUnit Jupiter for unit testing -->
     <dependency>
-      <groupId>org.eclipse.jetty</groupId>
-      <artifactId>jetty-server</artifactId>
-      <version>11.0.17</version>
-    </dependency>
-
-    <!-- Jetty Servlet handler -->
-    <dependency>
-      <groupId>org.eclipse.jetty</groupId>
-      <artifactId>jetty-servlet</artifactId>
-      <version>11.0.17</version>
-    </dependency>
-
-    <!-- Jakarta Servlet API -->
-    <dependency>
-      <groupId>jakarta.servlet</groupId>
-      <artifactId>jakarta.servlet-api</artifactId>
-      <version>5.0.0</version>
-      <scope>provided</scope>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.0</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
   <build>
     <plugins>
-      <!-- Compiler -->
+      <!-- Ensure the compiler uses Java 21 -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.11.0</version>
         <configuration>
-          <release>21</release>
-          <encoding>UTF-8</encoding>
+          <release>${maven.compiler.release}</release>
         </configuration>
       </plugin>
 
-      <!-- Exec plugin to run the main class -->
+      <!-- Run unit tests -->
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <version>3.1.0</version>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${surefire.version}</version>
         <configuration>
-          <mainClass>com.example.HelloServer</mainClass>
+          <includes>
+            <include>/*Test.java</include>
+          </includes>
         </configuration>
       </plugin>
     </plugins>
   </build>
+
 </project>
