@@ -1,7 +1,9 @@
 pipeline {
+  // Run the pipeline on your custom agent
   agent { label 'jenkins-agent' }
 
   environment {
+    // Adjust these as needed
     APP_NAME = 'devsecops2-challenge'
     REGISTRY = '10.25.157.175:32003/docker-hosted'
   }
@@ -9,6 +11,7 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
+        // Pull from your GitHub repo’s main branch
         git(
           url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
           branch: 'main',
@@ -18,16 +21,25 @@ pipeline {
     }
 
     stage('Build & Test') {
+      agent {
+        // Use a Maven+Java21 container for compilation and unit tests
+        docker {
+          image 'maven:3.9.7-openjdk-21'
+          args  '-v $HOME/.m2:/root/.m2'
+        }
+      }
       steps {
         sh 'mvn clean verify -DskipITs'
       }
     }
 
-    stage('Publish Artifacts') {
+    stage('Build & Push Image') {
       steps {
         script {
+          // Short commit hash for your image tag
           def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-          def image  = "${env.REGISTRY}/${env.APP_NAME}:${commit}"
+          def image  = "${REGISTRY}/${APP_NAME}:${commit}"
+
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
             usernameVariable: 'NEXUS_USER',
@@ -35,7 +47,7 @@ pipeline {
           )]) {
             sh """
               docker build -t ${image} .
-              echo "${NEXUS_PW}" | docker login --username "${NEXUS_USER}" --password-stdin ${env.REGISTRY}
+              echo "${NEXUS_PW}" | docker login --username "${NEXUS_USER}" --password-stdin ${REGISTRY}
               docker push ${image}
             """
           }
@@ -46,9 +58,9 @@ pipeline {
     stage('Deploy to DEV') {
       steps {
         sh """
-          helm upgrade --install ${env.APP_NAME} chart \
+          helm upgrade --install ${APP_NAME} chart \
             --namespace devsecops2 \
-            --set image.repository=${env.REGISTRY}/${env.APP_NAME} \
+            --set image.repository=${REGISTRY}/${APP_NAME} \
             --set image.tag=${env.BUILD_NUMBER}
         """
       }
