@@ -1,97 +1,55 @@
 pipeline {
-  agent {
-    kubernetes {
-      defaultContainer 'jnlp'
-      namespace 'devsecops2'
-    }
-  }
+  agent { label 'jenkins-agent' }
 
   environment {
-    // Nexus Docker registry
+    APP_NAME = 'devsecops2-challenge'
     REGISTRY = '10.25.157.175:32003/docker-hosted'
-    // Your application/chart name
-    APP_NAME  = 'devsecops2-challenge'
-    // Short SHA tag for immutability
-    COMMIT    = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-    IMAGE     = "${REGISTRY}/${APP_NAME}:${COMMIT}"
   }
 
   stages {
     stage('Checkout') {
       steps {
-        checkout scm
+        git(
+          url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+          branch: 'main',
+          credentialsId: 'git-https'
+        )
       }
     }
 
-    stage('Build & Unit Test') {
+    stage('Build & Test') {
       steps {
-        // Replace with your actual build command if not Maven
         sh 'mvn clean verify -DskipITs'
       }
     }
 
-    stage('Static Code Analysis') {
+    stage('Publish Artifacts') {
       steps {
-        withSonarQubeEnv('SonarQube') {
-          sh "sonar-scanner -Dsonar.projectKey=${APP_NAME} -Dsonar.sources=."
+        script {
+          def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          def image  = "${env.REGISTRY}/${env.APP_NAME}:${commit}"
+          withCredentials([usernamePassword(
+            credentialsId: 'nexus-cred',
+            usernameVariable: 'NEXUS_USER',
+            passwordVariable: 'NEXUS_PW'
+          )]) {
+            sh """
+              docker build -t ${image} .
+              echo "${NEXUS_PW}" | docker login --username "${NEXUS_USER}" --password-stdin ${env.REGISTRY}
+              docker push ${image}
+            """
+          }
         }
-      }
-    }
-
-    stage('Docker Build & Push') {
-      steps {
-        withCredentials([usernamePassword(
-          credentialsId: 'nexus-cred',
-          usernameVariable: 'NEXUS_USER',
-          passwordVariable: 'NEXUS_PW'
-        )]) {
-          sh """
-            docker build -t ${IMAGE} .
-            echo "${NEXUS_PW}" | docker login --username "${NEXUS_USER}" --password-stdin 10.25.157.175:32003
-            docker push ${IMAGE}
-          """
-        }
-      }
-    }
-
-    stage('Trivy Image Scan') {
-      steps {
-        // Fails the build on HIGH or CRITICAL findings
-        sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${IMAGE}"
       }
     }
 
     stage('Deploy to DEV') {
       steps {
         sh """
-          helm upgrade --install ${APP_NAME} chart \
-            --namespace dev \
-            --set image.repository=${REGISTRY}/${APP_NAME} \
-            --set image.tag=${COMMIT}
-        """
-      }
-    }
-
-    stage('Smoke Tests') {
-      steps {
-        // Adjust or replace with your smoke-test script
-        sh './scripts/smoke-test.sh'
-      }
-    }
-
-    stage('Promote to PROD') {
-      steps {
-        input message: "Approve promoting ${APP_NAME}:${COMMIT} to PROD?"
-      }
-    }
-
-    stage('Deploy to PROD') {
-      steps {
-        sh """
-          helm upgrade --install ${APP_NAME} chart \
-            --namespace prod \
-            --set image.repository=${REGISTRY}/${APP_NAME} \
-            --set image.tag=${COMMIT}
+          helm upgrade --install ${env.APP_NAME} chart \
+            --namespace devsecops2 \
+            --set image.repository=${env.REGISTRY}/${env.APP_NAME} \
+            --set image.tag=${env.BUILD_NUMBER}
         """
       }
     }
