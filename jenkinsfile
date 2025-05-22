@@ -20,9 +20,11 @@ pipeline {
     stage('Build & Test') {
       agent {
         docker {
-          // Official Maven image with Java 21 (Eclipse Temurin) :contentReference[oaicite:0]{index=0}
-          image 'docker.io/library/maven:3.9.7-eclipse-temurin-21-alpine'
-          args  '-v $HOME/.m2:/root/.m2'
+          image 'maven:3.9.7-eclipse-temurin-21-alpine'
+          // run as root so workspace permissions line up
+          args  '-u root:root -v $HOME/.m2:/root/.m2'
+          // reuse the checked-out workspace mount
+          reuseNode true 
         }
       }
       steps {
@@ -35,7 +37,6 @@ pipeline {
         script {
           def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
           def image  = "${REGISTRY}/${APP_NAME}:${commit}"
-
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
             usernameVariable: 'NEXUS_USER',
