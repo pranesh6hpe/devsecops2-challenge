@@ -18,16 +18,8 @@ pipeline {
     }
 
     stage('Build & Test') {
-      agent {
-        docker {
-          image 'maven:3.9.7-eclipse-temurin-21-alpine'
-          // run as root so workspace permissions line up
-          args  '-u root:root -v $HOME/.m2:/root/.m2'
-          // reuse the checked-out workspace mount
-          reuseNode true 
-        }
-      }
       steps {
+        // Run with the upgraded Maven already on the agent
         sh 'mvn clean verify -DskipITs'
       }
     }
@@ -65,8 +57,6 @@ pipeline {
   }
 
   post {
-    always {
-      cleanWs()
-    }
+    always { cleanWs() }
   }
 }
