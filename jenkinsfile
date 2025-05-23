@@ -48,13 +48,13 @@ pipeline {
             sh """
               # Build your Docker image
               docker build -t ${image} .
-              
+
               # Login to your Nexus registry over HTTP
               echo "${NEXUS_PW}" | \
                 docker login --tls-verify=false \
                              --username "${NEXUS_USER}" \
                              --password-stdin ${REGISTRY_HOST}
-              
+
               # Push the image
               docker push ${image}
             """
@@ -83,6 +83,6 @@ pipeline {
     always {
       // Always clean workspace, even on failures
       cleanWs()
-    }
-  }
+    }
+  }
 }
