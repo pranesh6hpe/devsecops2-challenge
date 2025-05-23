@@ -81,7 +81,7 @@ pipeline {
       }
     }
 
-    stage('Trivy Image Scan') {
+   stage('Trivy Image Scan') {
   steps {
     script {
       withCredentials([usernamePassword(
@@ -92,15 +92,14 @@ pipeline {
         sh '''
           IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
 
-          # Make sure we can fetch remote manifest
-          export TRIVY_USERNAME=$NEXUS_USER
-          export TRIVY_PASSWORD=$NEXUS_PW
-
-          trivy image --remote \
-            --exit-code 1 \
+          # scan straight from Nexus (HTTP registry)
+          trivy image \
+            --username  "$NEXUS_USER" \
+            --password  "$NEXUS_PW" \
+            --insecure              \          # allow plain-HTTP
+            --exit-code 1           \
             --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --skip-update \
+            --ignore-unfixed        \
             "$IMAGE"
         '''
       }
