@@ -82,17 +82,32 @@ pipeline {
     }
 
     stage('Trivy Image Scan') {
-      steps {
-        echo "🔍  Scanning $IMAGE for vulnerabilities"
-        sh """\
-          trivy image \
+  steps {
+    script {
+      withCredentials([usernamePassword(
+        credentialsId: 'nexus-cred',
+        usernameVariable: 'NEXUS_USER',
+        passwordVariable: 'NEXUS_PW'
+      )]) {
+        sh '''
+          IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
+
+          # Make sure we can fetch remote manifest
+          export TRIVY_USERNAME=$NEXUS_USER
+          export TRIVY_PASSWORD=$NEXUS_PW
+
+          trivy image --remote \
             --exit-code 1 \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
-            $IMAGE
-        """
+            --skip-update \
+            "$IMAGE"
+        '''
       }
     }
+  }
+}
+
 
     stage('Deploy to DEV') {
       steps {
