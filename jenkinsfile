@@ -1,17 +1,5 @@
-/**
- * ───────────────────────────────────────────────────────────────
- *  DevSecOps-2  ·  Jenkinsfile
- *  • builds + tests with Maven
- *  • containerises the JAR
- *  • pushes the image to Nexus (HTTP, port 32030)
- *  • deploys to the devsecops2 namespace with Helm
- * ───────────────────────────────────────────────────────────────
- */
-
 pipeline {
-  /------------------------------------------------------------/
   agent { label 'jenkins-agent' }
-  /------------------------------------------------------------/
   environment {
     APP_NAME      = 'devsecops2-challenge'
 
@@ -19,10 +7,8 @@ pipeline {
     REGISTRY_HOST = '10.25.157.175:32030'
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
   }
-  /------------------------------------------------------------/
   stages {
 
-    /* 1 ─ Checkout code ---------------------------------------*/
     stage('Checkout') {
       steps {
         git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
@@ -31,12 +17,10 @@ pipeline {
       }
     }
 
-    /* 2 ─ Build & unit-test ----------------------------------*/
     stage('Build & Test') {
       steps { sh 'mvn clean verify -DskipITs' }
     }
 
-    /* 3 ─ Build image & push to Nexus ------------------------*/
     stage('Build & Push Image') {
       steps {
         script {
@@ -69,7 +53,6 @@ pipeline {
       }
     }
 
-    /* 4 ─ Deploy to DEV with Helm ----------------------------*/
     stage('Deploy to DEV') {
       steps {
         sh '''
@@ -82,6 +65,5 @@ pipeline {
       }
     }
   }
-  /------------------------------------------------------------/
   post { always { cleanWs() } }
 }
