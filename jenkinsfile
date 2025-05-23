@@ -1,17 +1,16 @@
 pipeline {
-  // Run the pipeline on your custom agent
   agent { label 'jenkins-agent' }
 
   environment {
-    APP_NAME = 'devsecops2-challenge'
-    REGISTRY = '10.25.157.175:32003'
-    IMAGE_NAME = "${REGISTRY}/docker-hosted/${APP_NAME}"
+    APP_NAME      = 'devsecops2-challenge'
+    REGISTRY      = '10.25.157.175:32003/docker-hosted'
+    REGISTRY_HOST = '10.25.157.175:32003'
   }
 
   stages {
     stage('Checkout') {
       steps {
-        // Pull from your GitHub repo’s main branch using git-https credentials
+        // Checkout your repo using your git-https credentials
         git(
           url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
           branch: 'main',
@@ -22,14 +21,14 @@ pipeline {
 
     stage('Debug JDK') {
       steps {
-        // Verify the agent is using Java 21
+        // Confirm the agent is running Java 21
         sh 'java -version; javac -version'
       }
     }
 
     stage('Build & Test') {
       steps {
-        // Build with Maven 3.9.7+ on the host
+        // Compile and unit-test with Maven on the agent
         sh 'mvn clean verify -DskipITs'
       }
     }
@@ -37,9 +36,9 @@ pipeline {
     stage('Build & Push Image') {
       steps {
         script {
-          // Short commit hash for your image tag
+          // Use the short SHA for immutable tagging
           def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-          def fullImage = "${IMAGE_NAME}:${commit}"
+          def image  = "${REGISTRY}/${APP_NAME}:${commit}"
 
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
@@ -47,16 +46,17 @@ pipeline {
             passwordVariable: 'NEXUS_PW'
           )]) {
             sh """
-              # Build the Docker image
-              docker build -t ${fullImage} .
-
-              # Login to your HTTP-only Nexus registry (TLS verification disabled)
-              echo "${NEXUS_PW}" | docker login --tls-verify=false \\
-                --username "${NEXUS_USER}" \\
-                --password-stdin ${REGISTRY}:32003
-
+              # Build your Docker image
+              docker build -t ${image} .
+              
+              # Login to your Nexus registry over HTTP
+              echo "${NEXUS_PW}" | \
+                docker login --tls-verify=false \
+                             --username "${NEXUS_USER}" \
+                             --password-stdin ${REGISTRY_HOST}
+              
               # Push the image
-              docker push ${fullImage}
+              docker push ${image}
             """
           }
         }
@@ -65,18 +65,23 @@ pipeline {
 
     stage('Deploy to DEV') {
       steps {
-        sh """
-          helm upgrade --install ${APP_NAME} chart \\
-            --namespace devsecops2 \\
-            --set image.repository=${IMAGE_NAME} \\
-            --set image.tag=${env.BUILD_NUMBER}
-        """
+        script {
+          // Redeploy the exact image we just pushed
+          def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          sh """
+            helm upgrade --install ${APP_NAME} chart \
+              --namespace devsecops2 \
+              --set image.repository=${REGISTRY}/${APP_NAME} \
+              --set image.tag=${commit}
+          """
+        }
       }
     }
   }
 
   post {
     always {
+      // Always clean workspace, even on failures
       cleanWs()
     }
   }
