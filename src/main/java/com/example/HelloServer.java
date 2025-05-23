@@ -14,8 +14,8 @@ public class HelloServer {
         ServletContextHandler handler = new ServletContextHandler();
         handler.addServlet(HelloServlet.class, "/");
         server.setHandler(handler);
-        System.out.println("Server started on http://localhost:8080");
         server.start();
+        System.out.println("🚀 Server started on http://localhost:8080");
         server.join();
     }
 
@@ -29,62 +29,77 @@ public class HelloServer {
                     <html lang="en">
                     <head>
                         <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>Funky Hello</title>
+                        <title>Hello Server</title>
                         <style>
                             body {
                                 margin: 0;
                                 padding: 0;
-                                display: flex;
-                                justify-content: center;
-                                align-items: center;
-                                height: 100vh;
-                                background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
                                 font-family: 'Comic Sans MS', cursive, sans-serif;
-                                animation: backgroundShift 10s infinite alternate;
-                            }
-
-                            @keyframes backgroundShift {
-                                0% { background-position: 0% 50%; }
-                                100% { background-position: 100% 50%; }
-                            }
-
-                            .box {
-                                padding: 30px 50px;
-                                background: white;
-                                border-radius: 15px;
-                                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+                                background: linear-gradient(135deg, #ff9a9e 0%, #fad0c4 99%);
+                                display: flex;
+                                flex-direction: column;
+                                align-items: center;
+                                justify-content: center;
+                                height: 100vh;
+                                color: #fff;
                                 text-align: center;
-                                animation: float 3s ease-in-out infinite;
                             }
-
-                            @keyframes float {
-                                0% { transform: translateY(0); }
-                                50% { transform: translateY(-10px); }
-                                100% { transform: translateY(0); }
-                            }
-
                             h1 {
-                                font-size: 2.5em;
-                                color: #ff4081;
+                                font-size: 4em;
+                                margin-bottom: 0.3em;
+                                text-shadow: 2px 2px 5px #000;
                             }
-
-                            p {
-                                color: #333;
+                            button {
+                                font-size: 1.5em;
+                                padding: 0.5em 1em;
+                                border: none;
+                                border-radius: 10px;
+                                background-color: #ff6f91;
+                                color: white;
+                                cursor: pointer;
+                                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                                transition: transform 0.2s, background-color 0.2s;
+                            }
+                            button:hover {
+                                transform: scale(1.1);
+                                background-color: #ff3e6c;
+                            }
+                            #datetime {
+                                margin-top: 20px;
+                                font-size: 1.3em;
+                                background: rgba(255, 255, 255, 0.2);
+                                padding: 0.5em 1em;
+                                border-radius: 12px;
+                                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                            }
+                            .emoji {
+                                font-size: 3em;
+                                margin-top: 20px;
+                                animation: bounce 1s infinite alternate;
+                            }
+                            @keyframes bounce {
+                                from { transform: translateY(0); }
+                                to { transform: translateY(-20px); }
                             }
                         </style>
+                        <script>
+                            function showDateTime() {
+                                const now = new Date();
+                                document.getElementById('datetime').textContent = 'Current Date & Time: ' + now.toLocaleString();
+                            }
+                        </script>
                     </head>
                     <body>
-                        <div class="box">
-                            <h1>🌈 Hello, World! 🎉</h1>
-                            <p>Welcome to the Funky Java Servlet UI 🚀</p>
-                        </div>
+                        <h1>Hello, World! 🌍</h1>
+                        <button onclick="showDateTime()">Show Date & Time</button>
+                        <div id="datetime"></div>
+                        <div class="emoji">😎🎉🚀</div>
                     </body>
                     </html>
                     """;
 
             resp.getWriter().write(html);
-            System.out.println("Funky request received from: " + req.getRemoteAddr());
+            System.out.println("👋 Served funky page to a visitor.");
         }
     }
 }
