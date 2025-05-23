@@ -1,14 +1,17 @@
 pipeline {
+  // Run the pipeline on your custom agent
   agent { label 'jenkins-agent' }
 
   environment {
     APP_NAME = 'devsecops2-challenge'
-    REGISTRY = '10.25.157.175:32003/docker-hosted'
+    REGISTRY = '10.25.157.175:32003'
+    IMAGE_NAME = "${REGISTRY}/docker-hosted/${APP_NAME}"
   }
 
   stages {
     stage('Checkout') {
       steps {
+        // Pull from your GitHub repo’s main branch using git-https credentials
         git(
           url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
           branch: 'main',
@@ -17,46 +20,15 @@ pipeline {
       }
     }
 
+    stage('Debug JDK') {
+      steps {
+        // Verify the agent is using Java 21
+        sh 'java -version; javac -version'
+      }
+    }
+
     stage('Build & Test') {
       steps {
-        // Run with the upgraded Maven already on the agent
+        // Build with Maven 3.9.7+ on the host
         sh 'mvn clean verify -DskipITs'
       }
-    }
-
-    stage('Build & Push Image') {
-      steps {
-        script {
-          def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-          def image  = "${REGISTRY}/${APP_NAME}:${commit}"
-          withCredentials([usernamePassword(
-            credentialsId: 'nexus-cred',
-            usernameVariable: 'NEXUS_USER',
-            passwordVariable: 'NEXUS_PW'
-          )]) {
-            sh """
-              docker build -t ${image} .
-              echo "${NEXUS_PW}" | docker login --username "${NEXUS_USER}" --password-stdin ${REGISTRY}
-              docker push ${image}
-            """
-          }
-        }
-      }
-    }
-
-    stage('Deploy to DEV') {
-      steps {
-        sh """
-          helm upgrade --install ${APP_NAME} chart \
-            --namespace devsecops2 \
-            --set image.repository=${REGISTRY}/${APP_NAME} \
-            --set image.tag=${env.BUILD_NUMBER}
-        """
-      }
-    }
-  }
-
-  post {
-    always { cleanWs() }
-  }
-}
