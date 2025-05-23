@@ -1,31 +1,25 @@
-# Use Eclipse Temurin Java 21 JRE base image
-FROM eclipse-temurin:21-jre-jammy
+# ---------- STAGE 1: build the app ----------
+FROM docker.io/library/maven:3.9.7-eclipse-temurin-21-alpine AS builder
 
-# Set working directory inside container
+WORKDIR /build
+# copy only pom and sources to leverage layer caching
+COPY pom.xml .
+COPY src ./src
+
+# build and package your application (produces target/*.jar)
+RUN mvn clean package -DskipTests
+
+# ---------- STAGE 2: run the app ----------
+FROM docker.io/eclipse-temurin:21-jre-jammy
+
+# adjust to wherever you want logs/config at runtime
 WORKDIR /app
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-# Copy the Spring Boot fat jar (built by Maven)
-COPY target/my-app-1.0-SNAPSHOT.jar app.jar
+# copy the shaded jar from the builder stage
+COPY --from=builder /build/target/devsecops2-challenge-1.0.0-SNAPSHOT.jar app.jar
 
-# Expose port your Spring Boot app runs on (default 8080)
+# expose the same port your HelloServer uses
 EXPOSE 8080
 
-# Run the jar file
-=======
-COPY target/*.jar app.jar
-=======
-# Copy the Spring Boot fat jar (built by Maven)
-COPY target/my-app-1.0-SNAPSHOT.jar app.jar
->>>>>>> 26d0d08d8dbafd34c49418349d68e2c0ef013326
-
-# Expose port your Spring Boot app runs on (default 8080)
-EXPOSE 8080
-<<<<<<< HEAD
->>>>>>> b402fe2d95c016a6119a22f2b73ad682971b1518
-=======
-
-# Run the jar file
->>>>>>> 26d0d08d8dbafd34c49418349d68e2c0ef013326
+# run your application
 ENTRYPOINT ["java", "-jar", "app.jar"]
