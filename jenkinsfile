@@ -3,7 +3,6 @@ pipeline {
   environment {
     APP_NAME      = 'devsecops2-challenge'
 
-    /* Nexus Docker registry (HTTP) */
     REGISTRY_HOST = '10.25.157.175:32030'
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
   }
@@ -18,26 +17,29 @@ pipeline {
     }
 
     stage('Build & Test') {
-      steps { sh 'mvn clean verify -DskipITs' }
+      steps { 
+        sh 'mvn clean verify -DskipITs' 
+      }
     }
 
     stage('Build & Push Image') {
       steps {
         script {
-          /* short SHA tag */
           env.IMAGE_TAG = sh(
             returnStdout: true,
             script: 'git rev-parse --short HEAD'
           ).trim()
           env.IMAGE = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
 
-          /* login & push without Groovy interpolation warnings */
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
             usernameVariable: 'NEXUS_USER',
             passwordVariable: 'NEXUS_PW'
           )]) {
             sh '''
+              export XDG_RUNTIME_DIR=/tmp/runtime-$USER
+              mkdir -p $XDG_RUNTIME_DIR
+
               echo "🛠  Building $IMAGE"
               docker build -t "$IMAGE" .
 
