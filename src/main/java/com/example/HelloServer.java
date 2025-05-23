@@ -1,5 +1,6 @@
 package com.example;
 
+import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.binder.jetty.JettyServerThreadPoolMetrics;
 import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
 import io.micrometer.prometheus.PrometheusConfig;
@@ -13,12 +14,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.util.Collections;
 
 public class HelloServer {
 
     /**
      * The Prometheus registry is shared application-wide.
-     * No longer transient—this is not a servlet instance field.
+     * Not transient—this is not a servlet instance field.
      */
     private static final PrometheusMeterRegistry REGISTRY =
         new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
@@ -26,12 +28,16 @@ public class HelloServer {
     public static void main(String[] args) throws Exception {
         Server server = new Server(8080);
 
-        // Bind JVM & Jetty thread-pool metrics into the registry
+        // Bind JVM metrics
         new JvmThreadMetrics().bindTo(REGISTRY);
+
+        // Bind Jetty thread-pool metrics (no extra tags)
         new JettyServerThreadPoolMetrics(
-            server.getThreadPool(), "jetty", null
+            server.getThreadPool(),
+            Collections.<Tag>emptyList()
         ).bindTo(REGISTRY);
 
+        // Set up our servlets
         ServletContextHandler handler = new ServletContextHandler();
         handler.addServlet(HelloServlet.class, "/");
         handler.addServlet(new ServletHolder(new MetricsServlet(REGISTRY)), "/metrics");
@@ -130,7 +136,7 @@ public class HelloServer {
 
     /** Dumps Prometheus metrics in the Prometheus text format */
     public static class MetricsServlet extends HttpServlet {
-        // HttpServlet is Serializable, so mark this non-serializable field transient
+        // HttpServlet implements Serializable, so mark this non-serializable field transient
         private final transient PrometheusMeterRegistry registry;
 
         public MetricsServlet(PrometheusMeterRegistry registry) {
