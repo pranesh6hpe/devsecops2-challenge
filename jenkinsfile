@@ -3,32 +3,27 @@ pipeline {
 
   environment {
     APP_NAME      = 'devsecops2-challenge'
-    REGISTRY      = '10.25.157.175:32003/docker-hosted'
     REGISTRY_HOST = '10.25.157.175:32003'
+    REGISTRY      = "${REGISTRY_HOST}/docker-hosted"
   }
 
   stages {
     stage('Checkout') {
       steps {
-        // Checkout your repo using your git-https credentials
-        git(
-          url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-          branch: 'main',
-          credentialsId: 'git-https'
-        )
+        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+            branch: 'main',
+            credentialsId: 'git-https'
       }
     }
 
     stage('Debug JDK') {
       steps {
-        // Confirm the agent is running Java 21
         sh 'java -version; javac -version'
       }
     }
 
     stage('Build & Test') {
       steps {
-        // Compile and unit-test with Maven on the agent
         sh 'mvn clean verify -DskipITs'
       }
     }
@@ -36,7 +31,6 @@ pipeline {
     stage('Build & Push Image') {
       steps {
         script {
-          // Use the short SHA for immutable tagging
           def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
           def image  = "${REGISTRY}/${APP_NAME}:${commit}"
 
@@ -45,19 +39,18 @@ pipeline {
             usernameVariable: 'NEXUS_USER',
             passwordVariable: 'NEXUS_PW'
           )]) {
-            sh """
-              # Build your Docker image
+            sh '''
+              # Build the container image
               docker build -t ${image} .
               
-              # Login to your Nexus registry over HTTP
-              echo "${NEXUS_PW}" | \
-                docker login --tls-verify=false \
-                             --username "${NEXUS_USER}" \
-                             --password-stdin ${REGISTRY_HOST}
-              
-              # Push the image
+              # Login to Nexus Docker registry (HTTP)
+              echo "${NEXUS_PW}" | docker login --tls-verify=false \
+                --username "${NEXUS_USER}" \
+                --password-stdin ${REGISTRY_HOST}
+
+              # Push your image
               docker push ${image}
-            """
+            '''
           }
         }
       }
@@ -66,7 +59,6 @@ pipeline {
     stage('Deploy to DEV') {
       steps {
         script {
-          // Redeploy the exact image we just pushed
           def commit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
           sh """
             helm upgrade --install ${APP_NAME} chart \
@@ -81,7 +73,6 @@ pipeline {
 
   post {
     always {
-      // Always clean workspace, even on failures
       cleanWs()
     }
   }
