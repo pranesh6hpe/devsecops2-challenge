@@ -10,9 +10,11 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-            branch: 'main',
-            credentialsId: 'git-https'
+        git(
+          url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+          branch: 'main',
+          credentialsId: 'git-https'
+        )
       }
     }
 
@@ -39,18 +41,14 @@ pipeline {
             usernameVariable: 'NEXUS_USER',
             passwordVariable: 'NEXUS_PW'
           )]) {
-            sh '''
-              # Build the container image
+            // Use triple-double-quotes so ${image} and ${NEXUS_*} interpolate
+            sh """
               docker build -t ${image} .
-              
-              # Login to Nexus Docker registry (HTTP)
               echo "${NEXUS_PW}" | docker login --tls-verify=false \
                 --username "${NEXUS_USER}" \
                 --password-stdin ${REGISTRY_HOST}
-
-              # Push your image
               docker push ${image}
-            '''
+            """
           }
         }
       }
