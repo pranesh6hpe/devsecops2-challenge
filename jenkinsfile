@@ -3,8 +3,6 @@ pipeline {
 
   environment {
     APP_NAME      = 'devsecops2-challenge'
-
-    /* Nexus Docker registry (HTTP) */
     REGISTRY_HOST = '10.25.157.175:32030'
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
   }
@@ -13,9 +11,9 @@ pipeline {
     stage('Checkout') {
       steps {
         git(
-          url:          'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-          branch:       'main',
-          credentialsId:'git-https'
+          url:           'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+          branch:        'main',
+          credentialsId: 'git-https'
         )
       }
     }
@@ -27,22 +25,28 @@ pipeline {
     }
 
     stage('SonarQube Analysis') {
-      environment {
-        // SonarQube server configured in Jenkins → Global Tool Configuration
-        SONAR_PROJECT_KEY = "${APP_NAME}"
-      }
       steps {
         withCredentials([string(
           credentialsId: 'sonar-token',
           variable:      'SONAR_TOKEN'
         )]) {
           withSonarQubeEnv('SonarQube') {
-            sh """
+            // actually run the scanner
+            sh """\
               mvn sonar:sonar \
-                -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-                -Dsonar.login=$SONAR_TOKEN
+                -Dsonar.projectKey=${APP_NAME} \
+                -Dsonar.login=${SONAR_TOKEN}
             """
           }
+        }
+      }
+    }
+
+    stage('Quality Gate') {
+      // abortPipeline: true will fail the build if quality gate is not passed
+      steps {
+        timeout(time: 2, unit: 'MINUTES') {
+          waitForQualityGate abortPipeline: true
         }
       }
     }
@@ -50,7 +54,6 @@ pipeline {
     stage('Build & Push Image') {
       steps {
         script {
-          /* short SHA tag */
           env.IMAGE_TAG = sh(
             returnStdout: true,
             script: 'git rev-parse --short HEAD'
@@ -62,11 +65,11 @@ pipeline {
             usernameVariable: 'NEXUS_USER',
             passwordVariable: 'NEXUS_PW'
           )]) {
-            sh '''
+            sh '''\
               echo "🛠  Building $IMAGE"
               docker build --security-opt seccomp=unconfined -t "$IMAGE" .
 
-              echo "🔐  Logging into Nexus Docker registry"
+              echo "🔐  Logging into Nexus"
               echo "$NEXUS_PW" | docker login --tls-verify=false \
                    --username "$NEXUS_USER" --password-stdin "$REGISTRY_HOST"
 
@@ -81,7 +84,7 @@ pipeline {
     stage('Trivy Image Scan') {
       steps {
         echo "🔍  Scanning $IMAGE for vulnerabilities"
-        sh """
+        sh """\
           trivy image \
             --exit-code 1 \
             --severity HIGH,CRITICAL \
@@ -93,7 +96,7 @@ pipeline {
 
     stage('Deploy to DEV') {
       steps {
-        sh '''
+        sh '''\
           echo "🚀  helm upgrade --install $APP_NAME (tag $IMAGE_TAG)"
           helm upgrade --install "$APP_NAME" chart \
             --namespace devsecops2 \
@@ -105,9 +108,7 @@ pipeline {
     }
   }
 
-  post {
-    always {
-      cleanWs()
-    }
+  post { 
+    always { cleanWs() }
   }
 }
