@@ -1,82 +1,87 @@
 pipeline {
-  agent { label 'jenkins-agent' }
+  /*------------------------------------------------------------------
+   * 1) Where the pipeline runs
+   *------------------------------------------------------------------*/
+  agent { label 'jenkins-agent' }          // your static or k8s agent
 
+  /*------------------------------------------------------------------
+   * 2) Global variables
+   *------------------------------------------------------------------*/
   environment {
-    APP_NAME      = 'devsecops2-challenge'
-    REGISTRY_HOST = '10.25.157.175:32030'           // Nexus Docker Registry port you’ve exposed
-    IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"// Repo path under the registry
+    APP_NAME      = 'devsecops2-challenge'                 // image/chart name
+    REGISTRY_HOST = '10.25.157.175:32030'                  // Nexus Docker port
+    IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"       // repo prefix
   }
 
+  /*------------------------------------------------------------------
+   * 3) Pipeline stages
+   *------------------------------------------------------------------*/
   stages {
+
+    /*--- Checkout source code ------------------------------------*/
     stage('Checkout') {
       steps {
-        git(
-          url:          'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-          branch:       'main',
-          credentialsId:'git-https'
-        )
+        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+            branch: 'main',
+            credentialsId: 'git-https'
       }
     }
 
-    stage('Debug JDK') {
-      steps {
-        sh 'java -version; javac -version'
-      }
-    }
-
+    /*--- Build & unit-test (Maven) ------------------------------*/
     stage('Build & Test') {
       steps {
         sh 'mvn clean verify -DskipITs'
       }
     }
 
+    /*--- Build Docker image & push to Nexus ---------------------*/
     stage('Build & Push Image') {
       steps {
         script {
-          // get short SHA for tagging
-          def commit = sh(returnStdout:true, script:'git rev-parse --short HEAD').trim()
-          def image  = "${IMAGE_ROOT}/${APP_NAME}:${commit}"
+          /* short SHA tag */
+          def commit = sh(returnStdout: true,
+                          script: 'git rev-parse --short HEAD').trim()
+          env.IMAGE_TAG = commit          // pass into shell below
+          env.IMAGE     = "${IMAGE_ROOT}/${APP_NAME}:${commit}"
 
+          /* safely pass creds withEnv → no Groovy interpolation */
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
             usernameVariable: 'NEXUS_USER',
             passwordVariable: 'NEXUS_PW'
           )]) {
-            sh """
-              # build the Docker image
-              docker build -t ${image} .
+            sh '''
+              echo "🛠  Building Docker image $IMAGE"
+              docker build -t $IMAGE .
 
-              # login to Nexus Docker registry (HTTP, TLS disabled)
-              echo "${NEXUS_PW}" | docker login --tls-verify=false \\
-                --username "${NEXUS_USER}" \\
-                --password-stdin ${REGISTRY_HOST}
+              echo "🔐  Logging in to Nexus registry"
+              echo "$NEXUS_PW" | docker login --tls-verify=false \
+                   --username "$NEXUS_USER" --password-stdin "$REGISTRY_HOST"
 
-              # push the image
-              docker push ${image}
-            """
+              echo "📤  Pushing $IMAGE"
+              docker push "$IMAGE"
+            '''
           }
         }
       }
     }
 
+    /*--- Deploy to DEV namespace with Helm ----------------------*/
     stage('Deploy to DEV') {
       steps {
-        script {
-          def commit = sh(returnStdout:true, script:'git rev-parse --short HEAD').trim()
-          sh """
-            helm upgrade --install ${APP_NAME} chart \
-              --namespace devsecops2 \
-              --set image.repository=${IMAGE_ROOT}/${APP_NAME} \
-              --set image.tag=${commit}
-          """
-        }
+        sh '''
+          echo "🚀  helm upgrade --install $APP_NAME"
+          helm upgrade --install $APP_NAME chart \
+            --namespace devsecops2 \
+            --set image.repository=$IMAGE_ROOT/$APP_NAME \
+            --set image.tag=$IMAGE_TAG
+        '''
       }
     }
   }
 
-  post {
-    always {
-      cleanWs()
-    }
-  }
+  /*------------------------------------------------------------------
+   * 4) Always cleanup
+   *------------------------------------------------------------------*/
+  post { always { cleanWs() } }
 }
