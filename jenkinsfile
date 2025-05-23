@@ -1,5 +1,6 @@
 pipeline {
   agent { label 'jenkins-agent' }
+
   environment {
     APP_NAME      = 'devsecops2-challenge'
 
@@ -7,18 +8,43 @@ pipeline {
     REGISTRY_HOST = '10.25.157.175:32030'
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
   }
-  stages {
 
+  stages {
     stage('Checkout') {
       steps {
-        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-            branch: 'main',
-            credentialsId: 'git-https'
+        git(
+          url:          'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+          branch:       'main',
+          credentialsId:'git-https'
+        )
       }
     }
 
     stage('Build & Test') {
-      steps { sh 'mvn clean verify -DskipITs' }
+      steps {
+        sh 'mvn clean verify -DskipITs'
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      environment {
+        // SonarQube server configured in Jenkins → Global Tool Configuration
+        SONAR_PROJECT_KEY = "${APP_NAME}"
+      }
+      steps {
+        withCredentials([string(
+          credentialsId: 'sonar-token',
+          variable:      'SONAR_TOKEN'
+        )]) {
+          withSonarQubeEnv('SonarQube') {
+            sh """
+              mvn sonar:sonar \
+                -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+                -Dsonar.login=$SONAR_TOKEN
+            """
+          }
+        }
+      }
     }
 
     stage('Build & Push Image') {
@@ -31,7 +57,6 @@ pipeline {
           ).trim()
           env.IMAGE = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
 
-          /* login & push without Groovy interpolation warnings */
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
             usernameVariable: 'NEXUS_USER',
@@ -39,7 +64,7 @@ pipeline {
           )]) {
             sh '''
               echo "🛠  Building $IMAGE"
-              docker build -t "$IMAGE" .
+              docker build --security-opt seccomp=unconfined -t "$IMAGE" .
 
               echo "🔐  Logging into Nexus Docker registry"
               echo "$NEXUS_PW" | docker login --tls-verify=false \
@@ -53,6 +78,19 @@ pipeline {
       }
     }
 
+    stage('Trivy Image Scan') {
+      steps {
+        echo "🔍  Scanning $IMAGE for vulnerabilities"
+        sh """
+          trivy image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            $IMAGE
+        """
+      }
+    }
+
     stage('Deploy to DEV') {
       steps {
         sh '''
@@ -60,10 +98,16 @@ pipeline {
           helm upgrade --install "$APP_NAME" chart \
             --namespace devsecops2 \
             --set image.repository=$IMAGE_ROOT/$APP_NAME \
-            --set image.tag=$IMAGE_TAG
+            --set image.tag=$IMAGE_TAG \
+            --set imagePullSecrets[0].name=nexus-pull
         '''
       }
     }
   }
-  post { always { cleanWs() } }
+
+  post {
+    always {
+      cleanWs()
+    }
+  }
 }
