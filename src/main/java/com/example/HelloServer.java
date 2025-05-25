@@ -21,7 +21,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
-import java.util.Collections;
+import java.util.List;
 
 /**
  * Jetty server exposing:
@@ -43,10 +43,10 @@ public class HelloServer {
 
         Server server = new Server(8080);
 
-        // Jetty thread-pool metrics need Iterable<Tag>, so wrap Tag in a singleton list
+        // Jetty thread-pool metrics: needs Iterable<Tag>
         new JettyServerThreadPoolMetrics(
                 server.getThreadPool(),
-                Collections.singletonList(Tag.of("app", "hello"))
+                List.of(Tag.of("app", "hello"))
         ).bindTo(REGISTRY);
 
         // ── Servlet wiring ───────────────────────────────────────────────
