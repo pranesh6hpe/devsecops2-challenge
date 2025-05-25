@@ -1,154 +1,140 @@
 package com.example;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.binder.jetty.JettyServerThreadPoolMetrics;
 import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 
-import jakarta.servlet.http.HttpServlet;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-
 import java.io.IOException;
-import java.util.Collections;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 
+/**
+ * Simple Jetty server that now exposes:
+ *   • GET /          → colourful welcome page
+ *   • GET /weather   → today’s weather JSON (powered by OpenWeatherMap)
+ *   • GET /metrics   → Prometheus metrics
+ */
 public class HelloServer {
 
-    /**
-     * The Prometheus registry is shared application-wide.
-     * Not transient—this is not a servlet instance field.
-     */
     private static final PrometheusMeterRegistry REGISTRY =
-        new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+            new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+
+    /** fetch once per process start to keep the demo lightweight */
+    private static Weather cachedWeather;
 
     public static void main(String[] args) throws Exception {
-        Server server = new Server(8080);
-
-        // Bind JVM metrics
+        // --- Metrics binders -------------------------------------------------
         new JvmThreadMetrics().bindTo(REGISTRY);
 
-        // Bind Jetty thread-pool metrics (no extra tags)
-        new JettyServerThreadPoolMetrics(
-            server.getThreadPool(),
-            Collections.<Tag>emptyList()
-        ).bindTo(REGISTRY);
+        Server server = new Server(8080);
+        new JettyServerThreadPoolMetrics(server.getThreadPool(), Tag.of("app", "hello")).bindTo(REGISTRY);
 
-        // Set up our servlets
+        // --- Jetty servlet wiring -------------------------------------------
         ServletContextHandler handler = new ServletContextHandler();
         handler.addServlet(HelloServlet.class, "/");
         handler.addServlet(new ServletHolder(new MetricsServlet(REGISTRY)), "/metrics");
+        handler.addServlet(WeatherServlet.class, "/weather");
 
         server.setHandler(handler);
         server.start();
-        System.out.println("🚀 Server started on http://localhost:8080");
+        System.out.printf("🚀  Server started on http://localhost:%d%n", 8080);
         server.join();
     }
 
+    /* ------------------ inner servlets ----------------------------------- */
+
     public static class HelloServlet extends HttpServlet {
         @Override
-        protected void doGet(HttpServletRequest req, HttpServletResponse resp)
-                throws IOException {
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             resp.setContentType("text/html");
 
             String html = """
                 <!DOCTYPE html>
                 <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Hello Server</title>
-                    <style>
-                        body {
-                            margin: 0;
-                            padding: 0;
-                            font-family: 'Comic Sans MS', cursive, sans-serif;
-                            background: linear-gradient(135deg, #ff9a9e 0%, #fad0c4 99%);
-                            display: flex;
-                            flex-direction: column;
-                            align-items: center;
-                            justify-content: center;
-                            height: 100vh;
-                            color: #fff;
-                            text-align: center;
-                        }
-                        h1 {
-                            font-size: 4em;
-                            margin-bottom: 0.3em;
-                            text-shadow: 2px 2px 5px #000;
-                        }
-                        button {
-                            font-size: 1.5em;
-                            padding: 0.5em 1em;
-                            border: none;
-                            border-radius: 10px;
-                            background-color: #ff6f91;
-                            color: white;
-                            cursor: pointer;
-                            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-                            transition: transform 0.2s, background-color 0.2s;
-                        }
-                        button:hover {
-                            transform: scale(1.1);
-                            background-color: #ff3e6c;
-                        }
-                        #datetime {
-                            margin-top: 20px;
-                            font-size: 1.3em;
-                            background: rgba(255, 255, 255, 0.2);
-                            padding: 0.5em 1em;
-                            border-radius: 12px;
-                            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-                        }
-                        .emoji {
-                            font-size: 3em;
-                            margin-top: 20px;
-                            animation: bounce 1s infinite alternate;
-                        }
-                        @keyframes bounce {
-                            from { transform: translateY(0); }
-                            to   { transform: translateY(-20px); }
-                        }
-                    </style>
-                    <script>
-                        function showDateTime() {
-                            const now = new Date();
-                            document.getElementById('datetime').textContent =
-                              'Current Date & Time: ' + now.toLocaleString();
-                        }
-                    </script>
-                </head>
-                <body>
-                    <h1>Hello, World! 🌍</h1>
-                    <button onclick="showDateTime()">Show Date & Time</button>
-                    <div id="datetime"></div>
-                    <div class="emoji">😎🎉🚀</div>
+                <head><meta charset="UTF-8"><title>Hello Server</title></head>
+                <body style="font-family:Arial;">
+                  <h1>Hello, World! 🌞</h1>
+                  <p>Try <code>/weather</code> for today’s weather,<br/>
+                     or <code>/metrics</code> for Prometheus output.</p>
                 </body>
                 </html>
                 """;
 
             resp.getWriter().write(html);
-            System.out.println("👋 Served funky page to a visitor.");
         }
     }
 
-    /** Dumps Prometheus metrics in the Prometheus text format */
+    /** Returns Prometheus metrics */
     public static class MetricsServlet extends HttpServlet {
-        // HttpServlet implements Serializable, so mark this non-serializable field transient
         private final transient PrometheusMeterRegistry registry;
-
-        public MetricsServlet(PrometheusMeterRegistry registry) {
-            this.registry = registry;
-        }
-
-        @Override
-        protected void doGet(HttpServletRequest req, HttpServletResponse resp)
-                throws IOException {
-            resp.setStatus(HttpServletResponse.SC_OK);
-            resp.setContentType("text/plain");
+        public MetricsServlet(PrometheusMeterRegistry registry) { this.registry = registry; }
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            resp.setContentType("text/plain; version=0.0.4; charset=utf-8");
             resp.getWriter().write(registry.scrape());
         }
     }
+
+    /** Simple JSON endpoint */
+    public static class WeatherServlet extends HttpServlet {
+        private static final ObjectMapper MAPPER = new ObjectMapper();
+        private static final HttpClient  CLIENT = HttpClient.newHttpClient();
+
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            if (cachedWeather == null || !cachedWeather.date.equals(LocalDate.now())) {
+                cachedWeather = fetchWeather();
+            }
+            resp.setContentType("application/json");
+            resp.getWriter().write(MAPPER.writeValueAsString(cachedWeather));
+        }
+
+        private Weather fetchWeather() throws IOException {
+            String apiKey = System.getenv().getOrDefault("OPENWEATHER_KEY", "");
+            String city   = System.getenv().getOrDefault("CITY", "London");
+
+            if (apiKey.isEmpty()) {
+                return new Weather(LocalDate.now(), city, "API-key-missing", 0);
+            }
+
+            String url = String.format(
+                    "https://api.openweathermap.org/data/2.5/weather?q=%s&units=metric&appid=%s",
+                    city, apiKey);
+
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .build();
+
+                HttpResponse<String> response =
+                        CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+                JsonNode json = MAPPER.readTree(response.body());
+                String    desc = json.path("weather").get(0).path("description").asText();
+                double    temp = json.path("main").path("temp").asDouble();
+
+                return new Weather(LocalDate.now(), city, desc, temp);
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException(e);
+            }
+        }
+    }
+
+    /* ------------------ tiny DTO class ----------------------------------- */
+    public record Weather(LocalDate date, String city, String description, double temperatureC) { }
 }
