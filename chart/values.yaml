@@ -5,12 +5,13 @@
 replicaCount: 1
 
 image:
-  repository: 10.25.157.175:32003/docker-hosted/devsecops2-challenge
+  repository: 10.25.157.175:32030/docker-hosted/devsecops2-challenge
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: latest
 
-imagePullSecrets: []
+imagePullSecrets:
+  - name: nexus-pull
 nameOverride: ""
 fullnameOverride: ""
 
@@ -37,8 +38,14 @@ securityContext: {}
   # runAsUser: 1000
 
 service:
-  type: ClusterIP
+  type: NodePort
   port: 8080
+  nodePort: 32006
+
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "8080" 
 
 ingress:
   enabled: false
