@@ -87,7 +87,7 @@ public class HelloServer {
     }
 
     public static class WeatherServlet extends HttpServlet {
-        private static final ObjectMapper MAPPER = new ObjectMapper();
+        private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
         private static final HttpClient  CLIENT = HttpClient.newHttpClient();
 
         // Default coordinates = London; override via env-vars in K8s/Helm
