@@ -22,6 +22,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+
 
 /**
  * Fancy weather mini-app:
@@ -144,8 +147,8 @@ async function getWeather() {
             try {
                 // 1) geocode
                 String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?count=1&name="
-                                + URI.encode(city)
-                                + "&language=en";
+                + URLEncoder.encode(city, StandardCharsets.UTF_8)
+                + "&language=en";
                 JsonNode geo = getJson(geoUrl);
                 JsonNode loc = geo.path("results").get(0);
                 double lat = loc.path("latitude").asDouble();
