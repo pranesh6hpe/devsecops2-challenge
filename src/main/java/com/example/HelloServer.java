@@ -21,6 +21,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.util.Collections;
 
 /**
  * Jetty server exposing:
@@ -41,7 +42,10 @@ public class HelloServer {
         new JvmThreadMetrics().bindTo(REGISTRY);
 
         Server server = new Server(8080);
-        new JettyServerThreadPoolMetrics(server.getThreadPool(), Tag.of("app", "hello")).bindTo(REGISTRY);
+        // Use Collections.singletonList to supply Iterable<Tag>
+        new JettyServerThreadPoolMetrics(server.getThreadPool(),
+                Collections.singletonList(Tag.of("app", "hello")))
+                .bindTo(REGISTRY);
 
         // ── Servlet wiring ───────────────────────────────────────────────
         ServletContextHandler handler = new ServletContextHandler();
