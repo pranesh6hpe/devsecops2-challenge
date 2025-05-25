@@ -42,10 +42,12 @@ public class HelloServer {
         new JvmThreadMetrics().bindTo(REGISTRY);
 
         Server server = new Server(8080);
-        // Use Collections.singletonList to supply Iterable<Tag>
-        new JettyServerThreadPoolMetrics(server.getThreadPool(),
-                Collections.singletonList(Tag.of("app", "hello")))
-                .bindTo(REGISTRY);
+
+        // Jetty thread-pool metrics need Iterable<Tag>, so wrap Tag in a singleton list
+        new JettyServerThreadPoolMetrics(
+                server.getThreadPool(),
+                Collections.singletonList(Tag.of("app", "hello"))
+        ).bindTo(REGISTRY);
 
         // ── Servlet wiring ───────────────────────────────────────────────
         ServletContextHandler handler = new ServletContextHandler();
@@ -89,8 +91,8 @@ public class HelloServer {
         private static final HttpClient  CLIENT = HttpClient.newHttpClient();
 
         // Default coordinates = London; override via env-vars in K8s/Helm
-        private static final double LAT = Double.parseDouble(System.getenv().getOrDefault("LAT",  "51.5074"));
-        private static final double LON = Double.parseDouble(System.getenv().getOrDefault("LON", "-0.1278"));
+        private static final double LAT  = Double.parseDouble(System.getenv().getOrDefault("LAT",  "51.5074"));
+        private static final double LON  = Double.parseDouble(System.getenv().getOrDefault("LON", "-0.1278"));
         private static final String CITY = System.getenv().getOrDefault("CITY", "London");
 
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
