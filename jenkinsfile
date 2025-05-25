@@ -99,23 +99,27 @@ stage('Trivy Image Scan') {
 set -euo pipefail
 
 IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-REPORT=trivy-scan-${IMAGE_TAG}.txt
+REPORT_JSON=trivy-scan-${IMAGE_TAG}.json
 
-echo "🔎  Trivy scanning $IMAGE"
+echo "🔎  Trivy scanning $IMAGE (JSON output)"
 trivy image                              \
-  --username  "$NEXUS_USER"              \
-  --password  "$NEXUS_PW"                \
-  --insecure                             \
-  --ignore-unfixed                       \
-  --severity HIGH,CRITICAL               \
-  --exit-code 1                          \
-  "$IMAGE" | tee "$REPORT"
+  --username      "$NEXUS_USER"          \
+  --password      "$NEXUS_PW"            \
+  --insecure                           \
+  --ignore-unfixed                     \
+  --severity HIGH,CRITICAL             \
+  --exit-code 1                        \
+  --format json                        \
+  --output "$REPORT_JSON"             \
+  "$IMAGE"
+
 '''
-        archiveArtifacts artifacts: 'trivy-scan-*.txt', fingerprint: true
+        archiveArtifacts artifacts: 'trivy-scan-*.json', fingerprint: true
       }
     }
   }
 }
+
 
 
 
