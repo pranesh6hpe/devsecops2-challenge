@@ -23,27 +23,27 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 
 /**
- * Simple Jetty server that now exposes:
- *   • GET /          → colourful welcome page
- *   • GET /weather   → today’s weather JSON (powered by OpenWeatherMap)
- *   • GET /metrics   → Prometheus metrics
+ * Jetty server exposing:
+ *   • GET /            → welcome page
+ *   • GET /weather     → today’s weather from Open-Meteo
+ *   • GET /metrics     → Prometheus metrics
  */
 public class HelloServer {
 
     private static final PrometheusMeterRegistry REGISTRY =
             new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
-    /** fetch once per process start to keep the demo lightweight */
+    /** cache for the current day to avoid hammering the free API */
     private static Weather cachedWeather;
 
     public static void main(String[] args) throws Exception {
-        // --- Metrics binders -------------------------------------------------
+        // ── Metrics binders ──────────────────────────────────────────────
         new JvmThreadMetrics().bindTo(REGISTRY);
 
         Server server = new Server(8080);
         new JettyServerThreadPoolMetrics(server.getThreadPool(), Tag.of("app", "hello")).bindTo(REGISTRY);
 
-        // --- Jetty servlet wiring -------------------------------------------
+        // ── Servlet wiring ───────────────────────────────────────────────
         ServletContextHandler handler = new ServletContextHandler();
         handler.addServlet(HelloServlet.class, "/");
         handler.addServlet(new ServletHolder(new MetricsServlet(REGISTRY)), "/metrics");
@@ -51,34 +51,26 @@ public class HelloServer {
 
         server.setHandler(handler);
         server.start();
-        System.out.printf("🚀  Server started on http://localhost:%d%n", 8080);
+        System.out.println("🚀  Server listening on http://localhost:8080");
         server.join();
     }
 
-    /* ------------------ inner servlets ----------------------------------- */
+    /* ------------ inner servlets ------------------------------------- */
 
     public static class HelloServlet extends HttpServlet {
-        @Override
-        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             resp.setContentType("text/html");
-
-            String html = """
-                <!DOCTYPE html>
-                <html lang="en">
-                <head><meta charset="UTF-8"><title>Hello Server</title></head>
-                <body style="font-family:Arial;">
-                  <h1>Hello, World! 🌞</h1>
-                  <p>Try <code>/weather</code> for today’s weather,<br/>
-                     or <code>/metrics</code> for Prometheus output.</p>
-                </body>
-                </html>
-                """;
-
-            resp.getWriter().write(html);
+            resp.getWriter().write("""
+                <!doctype html><html lang="en"><head><meta charset="utf-8">
+                <title>Hello Weather</title></head><body style="font-family:sans-serif">
+                <h1>Hello, World! 🌤️</h1>
+                <p>• <a href="/weather">/weather</a> – today’s weather (Open-Meteo)</p>
+                <p>• <a href="/metrics">/metrics</a> – Prometheus metrics</p>
+                </body></html>
+                """);
         }
     }
 
-    /** Returns Prometheus metrics */
     public static class MetricsServlet extends HttpServlet {
         private final transient PrometheusMeterRegistry registry;
         public MetricsServlet(PrometheusMeterRegistry registry) { this.registry = registry; }
@@ -88,10 +80,14 @@ public class HelloServer {
         }
     }
 
-    /** Simple JSON endpoint */
     public static class WeatherServlet extends HttpServlet {
         private static final ObjectMapper MAPPER = new ObjectMapper();
         private static final HttpClient  CLIENT = HttpClient.newHttpClient();
+
+        // Default coordinates = London; override via env-vars in K8s/Helm
+        private static final double LAT = Double.parseDouble(System.getenv().getOrDefault("LAT",  "51.5074"));
+        private static final double LON = Double.parseDouble(System.getenv().getOrDefault("LON", "-0.1278"));
+        private static final String CITY = System.getenv().getOrDefault("CITY", "London");
 
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             if (cachedWeather == null || !cachedWeather.date.equals(LocalDate.now())) {
@@ -102,31 +98,20 @@ public class HelloServer {
         }
 
         private Weather fetchWeather() throws IOException {
-            String apiKey = System.getenv().getOrDefault("OPENWEATHER_KEY", "");
-            String city   = System.getenv().getOrDefault("CITY", "London");
-
-            if (apiKey.isEmpty()) {
-                return new Weather(LocalDate.now(), city, "API-key-missing", 0);
-            }
-
             String url = String.format(
-                    "https://api.openweathermap.org/data/2.5/weather?q=%s&units=metric&appid=%s",
-                    city, apiKey);
+                    "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+                  + "&current_weather=true&hourly=temperature_2m", LAT, LON);
 
             try {
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .GET()
-                        .build();
+                HttpResponse<String> response = CLIENT.send(
+                        HttpRequest.newBuilder().uri(URI.create(url)).GET().build(),
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
-                HttpResponse<String> response =
-                        CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                JsonNode current = MAPPER.readTree(response.body()).path("current_weather");
+                double   tempC   = current.path("temperature").asDouble();
+                String   summary = "Temp " + tempC + " °C";
 
-                JsonNode json = MAPPER.readTree(response.body());
-                String    desc = json.path("weather").get(0).path("description").asText();
-                double    temp = json.path("main").path("temp").asDouble();
-
-                return new Weather(LocalDate.now(), city, desc, temp);
+                return new Weather(LocalDate.now(), CITY, summary, tempC);
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -135,6 +120,6 @@ public class HelloServer {
         }
     }
 
-    /* ------------------ tiny DTO class ----------------------------------- */
+    /* simple record for JSON serialisation */
     public record Weather(LocalDate date, String city, String description, double temperatureC) { }
 }
