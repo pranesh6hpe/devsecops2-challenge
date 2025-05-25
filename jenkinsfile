@@ -113,6 +113,26 @@ pipeline {
       }
     }
 
+stage('Collect Trivy Operator Reports') {
+  steps {
+    sh '''
+      # Dump all VulnerabilityReports and ConfigAuditReports
+      kubectl -n trivy-system get vulnerabilityreports -o yaml > vulnerability-reports.yaml
+      kubectl -n trivy-system get configauditreports  -o yaml > configaudit-reports.yaml
+
+      # (Optional) Combine into one file
+      echo "---" >> combined-trivy-report.yaml
+      cat vulnerability-reports.yaml >> combined-trivy-report.yaml
+      echo "---" >> combined-trivy-report.yaml
+      cat configaudit-reports.yaml  >> combined-trivy-report.yaml
+    '''
+
+    // Archive the report files so they’re downloadable from Jenkins
+    archiveArtifacts artifacts: '*.yaml', fingerprint: true
+  }
+}
+
+
     /* ────────────────────────────────────────────────────────── */
     stage('Deploy to DEV') {
       steps {
