@@ -89,32 +89,34 @@ pipeline {
     }
 
     /* ────────────────────────────────────────────────────────── */
-  stage('Trivy Image Scan') {
+stage('Trivy Image Scan') {
   steps {
     script {
       withCredentials([usernamePassword(credentialsId: 'nexus-cred',
                                         usernameVariable: 'NEXUS_USER',
                                         passwordVariable: 'NEXUS_PW')]) {
-        sh '''
-          set -o pipefail                  # <- makes the pipeline return Trivy’s exit-code
-          IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-          REPORT=trivy-scan-${IMAGE_TAG}.txt
+        sh '''#!/usr/bin/env bash
+set -euo pipefail
 
-          echo "🔎  Trivy scanning $IMAGE"
-          trivy image                       \
-            --username  "$NEXUS_USER"       \
-            --password  "$NEXUS_PW"         \
-            --insecure                      \
-            --ignore-unfixed                \
-            --severity HIGH,CRITICAL        \
-            --exit-code 1                   \
-            "$IMAGE" | tee "$REPORT"
-        '''
+IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
+REPORT=trivy-scan-${IMAGE_TAG}.txt
+
+echo "🔎  Trivy scanning $IMAGE"
+trivy image                              \
+  --username  "$NEXUS_USER"              \
+  --password  "$NEXUS_PW"                \
+  --insecure                             \
+  --ignore-unfixed                       \
+  --severity HIGH,CRITICAL               \
+  --exit-code 1                          \
+  "$IMAGE" | tee "$REPORT"
+'''
         archiveArtifacts artifacts: 'trivy-scan-*.txt', fingerprint: true
       }
     }
   }
 }
+
 
 
 stage('Collect Trivy Operator Reports') {
