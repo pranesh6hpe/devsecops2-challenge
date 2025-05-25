@@ -88,45 +88,29 @@ pipeline {
       }
     }
 
-    /* ────────────────────────────────────────────────────────── */
-stage('Trivy Image Scan') {
-  steps {
-    script {
-      withCredentials([usernamePassword(credentialsId: 'nexus-cred',
-                                        usernameVariable: 'NEXUS_USER',
-                                        passwordVariable: 'NEXUS_PW')]) {
-        sh '''#!/usr/bin/env bash
-set -euo pipefail
+  stage('Trivy Image Scan') {
+      steps {
+        script {
+          withCredentials([usernamePassword(credentialsId: 'nexus-cred',
+                                            usernameVariable: 'NEXUS_USER',
+                                            passwordVariable: 'NEXUS_PW')]) {
+            sh '''
+              IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
 
-IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-RAW_REPORT=trivy-raw-${IMAGE_TAG}.txt
-ASCII_REPORT=trivy-report-${IMAGE_TAG}.txt
-
-echo "🔎  Trivy scanning $IMAGE → raw output in $RAW_REPORT"
-# 1) run Trivy with its default (Unicode) table
-trivy image                              \
-  --username  "$NEXUS_USER"              \
-  --password  "$NEXUS_PW"                \
-  --insecure                             \
-  --ignore-unfixed                       \
-  --severity HIGH,CRITICAL               \
-  --exit-code 1                          \
-  "$IMAGE" 2>&1 | tee "$RAW_REPORT"
-
-# 2) transliterate to ASCII only
-iconv -f UTF-8 -t ASCII//TRANSLIT "$RAW_REPORT" > "$ASCII_REPORT"
-
-# 3) strip any remaining non-printables (optional)
-sed -i 's/[\x00-\x1F\x80-\x9F]//g' "$ASCII_REPORT"
-
-echo "✓ Converted to plain-ASCII report → $ASCII_REPORT"
-'''
-        // Archive the ASCII report
-        archiveArtifacts artifacts: 'trivy-report-*.txt', fingerprint: true
+              echo "🔎  Trivy scanning $IMAGE"
+              trivy image                              \
+                --username  "$NEXUS_USER"              \
+                --password  "$NEXUS_PW"                \
+                --insecure                             \
+                --ignore-unfixed                       \
+                --severity HIGH,CRITICAL               \
+                --exit-code 1                          \
+                "$IMAGE"
+            '''
+          }
+        }
       }
     }
-  }
-}
 
 
 
