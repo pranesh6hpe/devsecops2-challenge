@@ -137,18 +137,21 @@ pipeline {
     }
 
     stage('Deploy to PROD') {
-      steps {
-        sh '''
-          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
-          helm upgrade --install "$APP_NAME" chart \
-            --namespace prod \
-            --set image.repository=$IMAGE_ROOT/$APP_NAME \
-            --set image.tag=$IMAGE_TAG \
-            --set imagePullSecrets[0].name=nexus-pull
-        '''
-      }
-    }
+  steps {
+    sh '''
+      echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
+      helm upgrade --install "$APP_NAME" chart \
+        --namespace prod \
+        --create-namespace \
+        --set image.repository=$IMAGE_ROOT/$APP_NAME \
+        --set image.tag=$IMAGE_TAG \
+        --set imagePullSecrets[0].name=nexus-pull \
+        --set service.type=NodePort \
+        --set service.nodePort=32008
+    '''
   }
+}
+
 
   post {
     always { cleanWs() }
