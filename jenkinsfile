@@ -117,13 +117,11 @@ pipeline {
     stage('Deploy to DEV') {
       steps {
         sh '''
-          echo "🚀  Deploying to DEV namespace 'dev'"
-          helm upgrade --install devsecops2-challenge ./chart \
-            --namespace dev --create-namespace \
-            --set image.repository=${IMAGE_ROOT}/${APP_NAME} \
-            --set image.tag=${IMAGE_TAG} \
-            --set service.type=NodePort \
-            --set service.nodePort=32006 \
+          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
+          helm upgrade --install "$APP_NAME" chart \
+            --namespace dev \
+            --set image.repository=$IMAGE_ROOT/$APP_NAME \
+            --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull
         '''
       }
@@ -131,20 +129,18 @@ pipeline {
 
     stage('Approval to PROD') {
       steps {
-        input message: "Deploy ${IMAGE_TAG} to PROD namespace?"
+        input message: "Deploy ${APP_NAME}:${IMAGE_TAG} to PROD?"
       }
     }
 
     stage('Deploy to PROD') {
       steps {
         sh '''
-          echo "🚀  Promoting to PROD namespace 'prod'"
-          helm upgrade --install devsecops2-challenge ./chart \
-            --namespace prod --create-namespace \
-            --set image.repository=${IMAGE_ROOT}/${APP_NAME} \
-            --set image.tag=${IMAGE_TAG} \
-            --set service.type=NodePort \
-            --set service.nodePort=32006 \
+          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
+          helm upgrade --install "$APP_NAME" chart \
+            --namespace prod \
+            --set image.repository=$IMAGE_ROOT/$APP_NAME \
+            --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull
         '''
       }
