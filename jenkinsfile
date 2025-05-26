@@ -100,7 +100,7 @@ pipeline {
       }
     }
 
-    stage('Collect Trivy Operator Reports') {
+    stage('Collect Trivy Reports') {
       steps {
         sh '''
           kubectl -n trivy-system get vulnerabilityreports -o yaml > vulnerability-reports.yaml
@@ -115,20 +115,20 @@ pipeline {
     }
 
     stage('Deploy to DEV') {
-  steps {
-    sh '''
-      echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
-      helm upgrade --install "$APP_NAME" chart \
-        --namespace dev \
-        --set image.repository=$IMAGE_ROOT/$APP_NAME \
-        --set image.tag=$IMAGE_TAG \
-        --set imagePullSecrets[0].name=nexus-pull \
-        --set service.type=NodePort \
-        --set service.nodePort=32007
-    '''
-  }
-}
-
+      steps {
+        sh '''
+          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
+          helm upgrade --install "$APP_NAME" chart \
+            --namespace dev \
+            --create-namespace \
+            --set image.repository=$IMAGE_ROOT/$APP_NAME \
+            --set image.tag=$IMAGE_TAG \
+            --set imagePullSecrets[0].name=nexus-pull \
+            --set service.type=NodePort \
+            --set service.nodePort=32007
+        '''
+      }
+    }
 
     stage('Approval to PROD') {
       steps {
@@ -137,23 +137,25 @@ pipeline {
     }
 
     stage('Deploy to PROD') {
-  steps {
-    sh '''
-      echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
-      helm upgrade --install "$APP_NAME" chart \
-        --namespace prod \
-        --create-namespace \
-        --set image.repository=$IMAGE_ROOT/$APP_NAME \
-        --set image.tag=$IMAGE_TAG \
-        --set imagePullSecrets[0].name=nexus-pull \
-        --set service.type=NodePort \
-        --set service.nodePort=32008
-    '''
-  }
-}
-
+      steps {
+        sh '''
+          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
+          helm upgrade --install "$APP_NAME" chart \
+            --namespace prod \
+            --create-namespace \
+            --set image.repository=$IMAGE_ROOT/$APP_NAME \
+            --set image.tag=$IMAGE_TAG \
+            --set imagePullSecrets[0].name=nexus-pull \
+            --set service.type=NodePort \
+            --set service.nodePort=32008
+        '''
+      }
+    }
+  } // end stages
 
   post {
-    always { cleanWs() }
+    always {
+      cleanWs()
+    }
   }
 }
