@@ -115,17 +115,20 @@ pipeline {
     }
 
     stage('Deploy to DEV') {
-      steps {
-        sh '''
-          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
-          helm upgrade --install "$APP_NAME" chart \
-            --namespace dev \
-            --set image.repository=$IMAGE_ROOT/$APP_NAME \
-            --set image.tag=$IMAGE_TAG \
-            --set imagePullSecrets[0].name=nexus-pull
-        '''
-      }
-    }
+  steps {
+    sh '''
+      echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
+      helm upgrade --install "$APP_NAME" chart \
+        --namespace dev \
+        --set image.repository=$IMAGE_ROOT/$APP_NAME \
+        --set image.tag=$IMAGE_TAG \
+        --set imagePullSecrets[0].name=nexus-pull \
+        --set service.type=NodePort \
+        --set service.nodePort=32007
+    '''
+  }
+}
+
 
     stage('Approval to PROD') {
       steps {
