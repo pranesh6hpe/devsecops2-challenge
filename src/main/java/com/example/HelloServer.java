@@ -47,9 +47,9 @@ public class HelloServer {
     public static void main(String[] args) throws Exception {
         LOGGER.info("Binding JVM thread metrics");
         new JvmThreadMetrics().bindTo(REGISTRY);
+
         LOGGER.info("Starting HTTP server on port 8080");
         Server server = new Server(8080);
-
         new JettyServerThreadPoolMetrics(
             server.getThreadPool(),
             List.of(Tag.of("app", "hello"))
@@ -65,8 +65,6 @@ public class HelloServer {
         LOGGER.info("🚀 Server started at http://localhost:8080");
         server.join();
     }
-
-    // ───────────────────────────── SERVLETS ─────────────────────────────
 
     /** Serves the single-page HTML/CSS/JS UI at “/” */
     public static class IndexServlet extends HttpServlet {
@@ -108,9 +106,7 @@ public class HelloServer {
                         <button onclick="getWeather()">Get Weather</button>
                         <div id="output" class="result"></div>
                       </div>
-
                       <footer><a href="/metrics" target="_blank">Prometheus metrics</a></footer>
-
                     <script>
                     async function getWeather() {
                       const city = document.getElementById('city').value.trim();
@@ -121,10 +117,10 @@ public class HelloServer {
                         const res = await fetch(`/weather?city=` + encodeURIComponent(city));
                         if (!res.ok) throw new Error(res.status);
                         const j = await res.json();
-                        out.innerHTML = \`
-                          <div>\${j.city} — \${j.date}</div>
-                          <div class="temp">\${j.temperatureC.toFixed(1)} °C</div>
-                          <div>\${j.description}</div>\`;
+                        out.innerHTML = `
+                          <div>${j.city} — ${j.date}</div>
+                          <div class="temp">${j.temperatureC.toFixed(1)} °C</div>
+                          <div>${j.description}</div>`;
                       } catch (e) {
                         out.textContent = 'Error: ' + e;
                       }
@@ -135,7 +131,6 @@ public class HelloServer {
                     """);
             } catch (IOException e) {
                 LOGGER.error("Failed to write index page", e);
-                // if we can’t write, nothing more to do
             }
         }
     }
