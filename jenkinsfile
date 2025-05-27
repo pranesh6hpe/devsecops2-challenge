@@ -100,31 +100,30 @@ pipeline {
       }
     }
 
-   stage('Collect Trivy Reports') {
-  steps {
-    sh '''
-      # Operator-level reports
-      kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml \
-        > vulnerability-reports.yaml
-      kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml \
-        > configaudit-reports.yaml
+    stage('Collect Trivy Reports') {
+      steps {
+        sh '''
+          # Operator-level reports
+          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml \
+            > vulnerability-reports.yaml
+          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml \
+            > configaudit-reports.yaml
 
-      # (Optional) namespace-scoped reports in "dev"
-      kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml \
-        >> vulnerability-reports.yaml || true
-      kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml \
-        >> configaudit-reports.yaml    || true
+          # (Optional) namespace-scoped reports in "dev"
+          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml \
+            >> vulnerability-reports.yaml || true
+          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml \
+            >> configaudit-reports.yaml    || true
 
-      # Combine into a single file
-      echo '---' > combined-trivy-report.yaml
-      cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
-      echo '---'                      >> combined-trivy-report.yaml
-      cat configaudit-reports.yaml    >> combined-trivy-report.yaml
-    '''
-    archiveArtifacts artifacts: '*.yaml', fingerprint: true
-  }
-}
-
+          # Combine into a single file
+          echo '---' > combined-trivy-report.yaml
+          cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
+          echo '---'                      >> combined-trivy-report.yaml
+          cat configaudit-reports.yaml    >> combined-trivy-report.yaml
+        '''
+        archiveArtifacts artifacts: '*.yaml', fingerprint: true
+      }
+    }
 
     stage('Deploy to DEV') {
       steps {
@@ -163,11 +162,53 @@ pipeline {
         '''
       }
     }
-  } // end stages
+  }
 
   post {
     always {
       cleanWs()
+    }
+
+    success {
+      script {
+        def gitEmail = sh(
+          script: "git --no-pager log -1 --pretty=format:'%ae'",
+          returnStdout: true
+        ).trim()
+
+        mail to: gitEmail,
+             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
+             body: """\
+Good news! The build was successful.
+
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Status: SUCCESS ✅
+
+Check it here: ${env.BUILD_URL}
+"""
+      }
+    }
+
+    failure {
+      script {
+        def gitEmail = sh(
+          script: "git --no-pager log -1 --pretty=format:'%ae'",
+          returnStdout: true
+        ).trim()
+
+        mail to: gitEmail,
+             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
+             body: """\
+Unfortunately, the build has failed.
+
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Status: FAILED ❌
+
+Check the console output for more details: ${env.BUILD_URL}
+"""
+      }
     }
   }
 }
