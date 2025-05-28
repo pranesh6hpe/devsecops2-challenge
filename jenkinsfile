@@ -140,40 +140,40 @@ pipeline {
       }
     }
 
-    stage('DAST with ZAP (AI-Powered)') {
-      steps {
-        echo "🕵 Starting DAST with OWASP ZAP + AI add-on"
-        script {
-          withCredentials([usernamePassword(
-            credentialsId: 'nexus-cred',
-            usernameVariable: 'NEXUS_USER',
-            passwordVariable: 'NEXUS_PW'
-          )]) {
-            echo "🔐 Authenticating to Nexus for ZAP image pull"
-            sh 'echo "$NEXUS_PW" | docker login --tls-verify=false --username "$NEXUS_USER" --password-stdin ${REGISTRY_HOST}'
+   stage('DAST with ZAP (AI-Powered)') {
+  steps {
+    echo "🕵 Starting DAST with OWASP ZAP + AI add-on"
+    script {
+      withCredentials([usernamePassword(
+        credentialsId: 'nexus-cred',
+        usernameVariable: 'NEXUS_USER',
+        passwordVariable: 'NEXUS_PW'
+      )]) {
+        echo "🔐 Authenticating to Nexus for ZAP image pull"
+        sh 'echo "$NEXUS_PW" | docker login --tls-verify=false --username "$NEXUS_USER" --password-stdin ${REGISTRY_HOST}'
 
-            echo "⬇ Pulling and running ZAP container"
-            sh '''
-              docker run --rm --entrypoint="" \
-                owasp/zap2docker-stable:latest \
-                zap-full-scan.py -addoninstall aipscan \
-                  -t http://${APP_NAME}.dev.svc.cluster.local:8080 \
-                  -r zap-report.html
-            '''
-          }
-        }
-        echo "✅ DAST scan finished"
-      }
-      post {
-        always {
-          echo "📦 Archiving ZAP report"
-          archiveArtifacts artifacts: 'zap-report.html', fingerprint: true
-        }
-        failure {
-          echo "❌ ZAP DAST scan encountered errors — check zap-report.html"
-        }
+        echo "⬇ Pulling and running ZAP container"
+        sh '''
+          docker run --rm --entrypoint="" \
+            docker.io/owasp/zap2docker-stable:latest \
+            zap-full-scan.py -addoninstall aipscan \
+              -t http://${APP_NAME}.dev.svc.cluster.local:8080 \
+              -r zap-report.html
+        '''
       }
     }
+    echo "✅ DAST scan finished"
+  }
+  post {
+    always {
+      echo "📦 Archiving ZAP report"
+      archiveArtifacts artifacts: 'zap-report.html', fingerprint: true
+    }
+    failure {
+      echo "❌ ZAP DAST scan encountered errors — check zap-report.html"
+    }
+  }
+}
 
     stage('Approval to PROD') {
       steps {
