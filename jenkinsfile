@@ -3,7 +3,7 @@ pipeline {
 
   environment {
     APP_NAME      = 'devsecops2-challenge'
-    REGISTRY_HOST = '10.25.157.175:32030'
+    REGISTRY_HOST = '10.25.157.175:32030'          // ← note: no protocol
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
   }
 
@@ -29,7 +29,7 @@ pipeline {
             sh '''
               mvn sonar:sonar \
                 -Dsonar.projectKey=${APP_NAME} \
-                -Dsonar.login=${SONAR_TOKEN}
+                -Dsonar.token=${SONAR_TOKEN}
             '''
           }
         }
@@ -47,11 +47,8 @@ pipeline {
     stage('Build & Push Image') {
       steps {
         script {
-          env.IMAGE_TAG = sh(
-            returnStdout: true,
-            script: 'git rev-parse --short HEAD'
-          ).trim()
-          env.IMAGE = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
+          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          env.IMAGE     = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
 
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
@@ -62,9 +59,9 @@ pipeline {
               echo "🛠  Building $IMAGE"
               docker build --security-opt seccomp=unconfined -t "$IMAGE" .
 
-              echo "🔐  Logging into Nexus (plain HTTP)"
+              echo "🔐  Logging into Nexus"
               echo "$NEXUS_PW" | docker login --tls-verify=false \
-                   --username "$NEXUS_USER" --password-stdin "$REGISTRY_HOST"
+                   --username "$NEXUS_USER" --password-stdin ${REGISTRY_HOST}
 
               echo "📤  Pushing $IMAGE"
               docker push --tls-verify=false "$IMAGE"
@@ -84,7 +81,6 @@ pipeline {
           )]) {
             sh '''
               IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-
               echo "🔎  Trivy scanning $IMAGE"
               trivy image \
                 --username  "$NEXUS_USER" \
@@ -103,19 +99,11 @@ pipeline {
     stage('Collect Trivy Reports') {
       steps {
         sh '''
-          # Operator-level reports
-          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml \
-            > vulnerability-reports.yaml
-          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml \
-            > configaudit-reports.yaml
+          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml > vulnerability-reports.yaml
+          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml   > configaudit-reports.yaml
+          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml          >> vulnerability-reports.yaml || true
+          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml            >> configaudit-reports.yaml    || true
 
-          # (Optional) namespace-scoped reports in "dev"
-          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml \
-            >> vulnerability-reports.yaml || true
-          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml \
-            >> configaudit-reports.yaml    || true
-
-          # Combine into a single file
           echo '---' > combined-trivy-report.yaml
           cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
           echo '---'                      >> combined-trivy-report.yaml
@@ -132,8 +120,8 @@ pipeline {
           helm upgrade --install "$APP_NAME" chart \
             --namespace dev \
             --create-namespace \
-            --set image.repository=$IMAGE_ROOT/$APP_NAME \
-            --set image.tag=$IMAGE_TAG \
+            --set image.repository=${IMAGE_ROOT}/${APP_NAME} \
+            --set image.tag=${IMAGE_TAG} \
             --set imagePullSecrets[0].name=nexus-pull \
             --set service.type=NodePort \
             --set service.nodePort=32007
@@ -144,10 +132,9 @@ pipeline {
     stage('DAST with ZAP (AI-Powered)') {
       steps {
         script {
-          // Authenticate to Nexus and pull the official ZAP container
-          docker.withRegistry("http://${env.REGISTRY_HOST}", 'nexus-cred') {
+          // <<<— CHANGE: use REGISTRY_HOST without http://
+          docker.withRegistry("http://${REGISTRY_HOST}".replace('http://',''), 'nexus-cred') {
             def zapImage = docker.image('owasp/zap2docker-stable:latest')
-            // Run ZAP full scan with AI add-on inside a throwaway container
             zapImage.inside('--entrypoint=""') {
               sh '''
                 echo "🔐  Installing AI add-on and running ZAP scan"
@@ -182,8 +169,8 @@ pipeline {
           helm upgrade --install "$APP_NAME" chart \
             --namespace prod \
             --create-namespace \
-            --set image.repository=$IMAGE_ROOT/$APP_NAME \
-            --set image.tag=$IMAGE_TAG \
+            --set image.repository=${IMAGE_ROOT}/${APP_NAME} \
+            --set image.tag=${IMAGE_TAG} \
             --set imagePullSecrets[0].name=nexus-pull \
             --set service.type=NodePort \
             --set service.nodePort=32008
@@ -193,24 +180,14 @@ pipeline {
   }
 
   post {
-    always {
-      cleanWs()
-    }
+    always { cleanWs() }
 
     success {
       script {
         def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
         mail to: gitEmail,
-             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
-             body: """\
-Good news! The build was successful.
-
-Project: ${env.JOB_NAME}
-Build Number: ${env.BUILD_NUMBER}
-Status: SUCCESS ✅
-
-Check it here: ${env.BUILD_URL}
-"""
+             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS ✅",
+             body: "Good news! Build succeeded. See ${env.BUILD_URL}"
       }
     }
 
@@ -218,16 +195,8 @@ Check it here: ${env.BUILD_URL}
       script {
         def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
         mail to: gitEmail,
-             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
-             body: """\
-Unfortunately, the build has failed.
-
-Project: ${env.JOB_NAME}
-Build Number: ${env.BUILD_NUMBER}
-Status: FAILED ❌
-
-Check the console output for more details: ${env.BUILD_URL}
-"""
+             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED ❌",
+             body: "Build failed. Check console output: ${env.BUILD_URL}"
       }
     }
   }
