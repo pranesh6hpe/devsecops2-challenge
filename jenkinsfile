@@ -52,36 +52,40 @@ pipeline {
       }
     }
 
-    stage('Build & Push Image') {
-      steps {
-        script {
-          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-          env.IMAGE     = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
-          echo "🖼  Will build image: ${IMAGE}"
+   stage('Build and Push Image') {
+  steps {
+    script {
+      withCredentials([usernamePassword(
+        credentialsId: 'nexus-cred',
+        usernameVariable: 'NEXUS_USER',
+        passwordVariable: 'NEXUS_PW'
+      )]) {
 
-          withCredentials([usernamePassword(
-            credentialsId: 'nexus-cred',
-            usernameVariable: 'NEXUS_USER',
-            passwordVariable: 'NEXUS_PW'
-          )]) {
-            echo "🛠  Building Docker image"
-            sh 'docker build --security-opt seccomp=unconfined -t "$IMAGE" .'
+        echo "🛠 Building Docker image"
+        sh 'docker build -t "$IMAGE" .'
 
-            echo "🔐  Logging into Nexus registry over HTTP (no TLS)"
-            sh '''
-              mkdir -p /etc/containers
-              echo -e '[registries.insecure]\nregistries = ["${REGISTRY_HOST}"]' > /etc/containers/registries.conf
-              echo "$NEXUS_PW" | docker login --username "$NEXUS_USER" --password-stdin http://${REGISTRY_HOST}
-            '''
+        echo "📜 Creating Podman insecure registry config"
+        sh '''
+          mkdir -p $WORKSPACE/.config/containers
+          cat <<EOF > $WORKSPACE/.config/containers/registries.conf
+[registries.insecure]
+registries = ["${REGISTRY_HOST}"]
+EOF
+        '''
 
-            echo "📤  Pushing image to Nexus"
-            sh 'docker push "$IMAGE"'
-          }
+        echo "🔐 Logging into registry (HTTP)"
+        sh '''
+          export REGISTRIES_CONF=$WORKSPACE/.config/containers/registries.conf
+          echo "$NEXUS_PW" | docker --config=$WORKSPACE/.config login --username "$NEXUS_USER" --password-stdin http://$REGISTRY_HOST
+        '''
 
-          echo "✅ Image build & push complete"
-        }
+        echo "📤 Pushing image to registry"
+        sh 'docker --config=$WORKSPACE/.config push "$IMAGE"'
       }
     }
+  }
+}
+
 
     stage('Trivy Image Scan') {
       steps {
