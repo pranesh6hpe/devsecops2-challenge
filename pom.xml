@@ -132,23 +132,27 @@
         </executions>
       </plugin>
 
-      <!-- SpotBugs plugin for static code analysis -->
+      <!-- SpotBugs Plugin -->
       <plugin>
         <groupId>com.github.spotbugs</groupId>
         <artifactId>spotbugs-maven-plugin</artifactId>
         <version>4.7.3.0</version>
+        <configuration>
+          <failOnError>false</failOnError>
+          <effort>Max</effort>
+          <threshold>Low</threshold>
+          <xmlOutput>true</xmlOutput>
+          <xmlOutputDirectory>${project.build.directory}/spotbugs</xmlOutputDirectory>
+          <excludeFilterFile>${basedir}/spotbugs-exclude.xml</excludeFilterFile>
+        </configuration>
         <executions>
           <execution>
             <phase>verify</phase>
             <goals>
-              <goal>spotbugs</goal>
+              <goal>check</goal>
             </goals>
           </execution>
         </executions>
-        <configuration>
-          <!-- Don't fail the build on SpotBugs findings -->
-          <failOnError>false</failOnError>
-        </configuration>
       </plugin>
 
     </plugins>
