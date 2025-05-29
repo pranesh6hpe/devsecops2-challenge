@@ -135,44 +135,53 @@ pipeline {
         '''
       }
     }
+stage('DAST Scan (ZAP Docker)') {
+  steps {
+    script {
+      // 1) authenticate to Docker Hub
+      withDockerRegistry([credentialsId: 'docker-cred']) {
+        sh '''
+          # pull the ZAP image
+          docker pull owasp/zap2docker-stable:latest
 
-    stage('DAST Scan (ZAP Docker)') {
-      steps {
-        script {
-          // log in to Docker Hub
-          withDockerRegistry([credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/']) {
-            sh '''
-              # pull & run ZAP in container
-              docker pull owasp/zap2docker-stable:latest
-              docker run --rm -u root --network host \
-                owasp/zap2docker-stable:latest zap.sh -cmd -addoninstall aipscan
+          # install the AI-Powered add-on
+          docker run --rm -u root --network host \
+            owasp/zap2docker-stable:latest \
+            zap.sh -cmd -addoninstall aipscan
 
-              docker run --rm -u root --network host \
-                owasp/zap2docker-stable:latest \
-                zap-full-scan.py \
-                  -t ${DEV_URL} \
-                  -r dap-results.html \
-                  -x dap-results.xml \
-                  -z "-config aipscan.maxConfidenceLevel=Medium" \
-                  -z "-config aipscan.maxAlertThreshold=Low"
-            '''
-          }
-        }
+          # run full DAST scan against DEV URL
+          docker run --rm -u root --network host \
+            owasp/zap2docker-stable:latest \
+            zap-full-scan.py \
+              -t ${DEV_URL} \
+              -r dap-results.html \
+              -x dap-results.xml \
+              -z "-config aipscan.maxConfidenceLevel=Medium" \
+              -z "-config aipscan.maxAlertThreshold=Low"
+        '''
       }
-      post {
-        always {
-          archiveArtifacts artifacts: 'dap-results.html,dap-results.xml', fingerprint: true
-        }
-        failure {
-          script {
-            def xml = readFile('dap-results.xml')
-            if (xml.contains('<riskdesc>') && xml =~ /riskdesc.*(High|Medium)/) {
-              error "⛔ DAST found High/Medium alerts—failing build."
-            }
+    }
+  }
+  post {
+    always {
+      // archive whatever we got
+      archiveArtifacts artifacts: 'dap-results.html,dap-results.xml', fingerprint: true
+    }
+    failure {
+      script {
+        // only check XML if it actually exists
+        if (fileExists('dap-results.xml')) {
+          def xml = readFile('dap-results.xml')
+          if (xml =~ /<riskdesc>.*(High|Medium)/) {
+            error "⛔ DAST found High/Medium issues—failing build."
           }
+        } else {
+          echo "⚠️  dap‐results.xml not found; skipping XML severity check."
         }
       }
     }
+  }
+}
 
     stage('Approval to PROD') {
       steps {
