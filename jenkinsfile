@@ -11,9 +11,11 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        git url:           'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-            branch:        'main',
-            credentialsId: 'git-https'
+        git(
+          url:           'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+          branch:        'main',
+          credentialsId: 'git-https'
+        )
       }
     }
 
@@ -27,11 +29,11 @@ pipeline {
       steps {
         withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
           withSonarQubeEnv('SonarQube') {
-            sh '''
+            sh """
               mvn sonar:sonar \
                 -Dsonar.projectKey=${APP_NAME} \
                 -Dsonar.login=${SONAR_TOKEN}
-            '''
+            """
           }
         }
       }
@@ -65,7 +67,7 @@ pipeline {
 
               echo "🔐  Logging into Nexus (plain HTTP)"
               echo "$NEXUS_PW" | docker login --tls-verify=false \
-                   --username "$NEXUS_USER" --password-stdin "$REGISTRY_HOST"
+                --username "$NEXUS_USER" --password-stdin "$REGISTRY_HOST"
 
               echo "📤  Pushing $IMAGE"
               docker push --tls-verify=false "$IMAGE"
@@ -75,49 +77,63 @@ pipeline {
       }
     }
 
-    stage('Trivy Image Scan') {
+    stage('Scans (SCA + DAST)') {
       steps {
         script {
+          // We already have IMAGE from the prior stage
+          
+          // 1) SCA with Trivy
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
             usernameVariable: 'NEXUS_USER',
             passwordVariable: 'NEXUS_PW'
           )]) {
-            sh '''
-              IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
+            sh """
               echo "🔎  Trivy scanning $IMAGE"
               trivy image \
                 --username "$NEXUS_USER" \
                 --password "$NEXUS_PW" \
                 --insecure \
-                --ignore-unfixed \
-                --severity HIGH,CRITICAL \
                 --exit-code 1 \
+                --severity HIGH,CRITICAL \
+                --ignore-unfixed \
                 "$IMAGE"
-            '''
+            """
           }
+
+          // 2) DAST with baked-in ZAP CLI
+          sh """
+            echo "🛠  Installing AI-scan add-on in baked ZAP..."
+            docker run --rm -u root --network host "$IMAGE" \
+              zap.sh -cmd -addoninstall aipscan
+
+            echo "🔎  Running DAST full scan against $DEV_URL..."
+            docker run --rm -u root --network host "$IMAGE" \
+              zap-full-scan.py \
+                -t ${DEV_URL} \
+                -r dap-results.html \
+                -x dap-results.xml \
+                -z "-config aipscan.maxConfidenceLevel=Medium" \
+                -z "-config aipscan.maxAlertThreshold=Low"
+          """
         }
       }
-    }
-
-    stage('Collect Trivy Reports') {
-      steps {
-        sh '''
-          # Operator-level reports
-          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml > vulnerability-reports.yaml
-          kubectl -n trivy-system get configauditreports.aquasecurity.github.io  -o yaml > configaudit-reports.yaml
-
-          # Namespace-scoped (dev) reports, if any
-          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml   >> vulnerability-reports.yaml || true
-          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml    >> configaudit-reports.yaml    || true
-
-          # Combine
-          echo '---' > combined-trivy-report.yaml
-          cat vulnerability-reports.yaml >> combined-trivy-report.yaml
-          echo '---' >> combined-trivy-report.yaml
-          cat configaudit-reports.yaml  >> combined-trivy-report.yaml
-        '''
-        archiveArtifacts artifacts: '*.yaml', fingerprint: true
+      post {
+        always {
+          archiveArtifacts artifacts: 'dap-results.html,dap-results.xml', fingerprint: true
+        }
+        failure {
+          script {
+            if (fileExists('dap-results.xml')) {
+              def xml = readFile('dap-results.xml').toLowerCase()
+              if (xml.contains('riskdesc="high"') || xml.contains('riskdesc="medium"')) {
+                error "⛔ DAST found Medium/High issues — failing build."
+              }
+            } else {
+              echo "⚠️  dap-results.xml not found; skipping DAST severity check."
+            }
+          }
+        }
       }
     }
 
@@ -135,61 +151,6 @@ pipeline {
         '''
       }
     }
-
-
-stage('DAST Scan (ZAP Docker)') {
-  steps {
-    script {
-      // Use your docker-cred to log in under Podman’s docker-alias
-      withCredentials([usernamePassword(
-        credentialsId: 'docker-cred',
-        usernameVariable: 'DOCKER_USER',
-        passwordVariable: 'DOCKER_PWD'
-      )]) {
-        sh '''
-          echo "$DOCKER_PWD" | docker login docker.io \
-            --username "$DOCKER_USER" --password-stdin
-
-          echo "🔽 Pulling ZAP image..."
-          docker pull owasp/zap2docker-stable:latest
-
-          echo "🛠 Installing AI-scan add-on..."
-          docker run --rm -u root --network host \
-            owasp/zap2docker-stable:latest \
-            zap.sh -cmd -addoninstall aipscan
-
-          echo "🔎 Running full DAST scan..."
-          docker run --rm -u root --network host \
-            owasp/zap2docker-stable:latest \
-            zap-full-scan.py \
-              -t ${DEV_URL} \
-              -r dap-results.html \
-              -x dap-results.xml \
-              -z "-config aipscan.maxConfidenceLevel=Medium" \
-              -z "-config aipscan.maxAlertThreshold=Low"
-        '''
-      }
-    }
-  }
-
-  post {
-    always {
-      archiveArtifacts artifacts: 'dap-results.html,dap-results.xml', fingerprint: true
-    }
-    failure {
-      script {
-        if (fileExists('dap-results.xml')) {
-          def xml = readFile('dap-results.xml').toLowerCase()
-          if (xml.contains('riskdesc="medium"') || xml.contains('riskdesc="high"')) {
-            error "⛔ DAST found medium/high issues—failing build."
-          }
-        } else {
-          echo "⚠️  dap-results.xml not found; skipping severity check."
-        }
-      }
-    }
-  }
-}
 
     stage('Approval to PROD') {
       steps {
@@ -216,14 +177,18 @@ stage('DAST Scan (ZAP Docker)') {
   post {
     always { cleanWs() }
     success {
-      mail to:   env.GIT_COMMITTER_EMAIL ?: 'team@example.com',
-           subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} succeeded ✅",
-           body:    "Good news! Your build succeeded: ${env.BUILD_URL}"
+      mail(
+        to:      env.GIT_COMMITTER_EMAIL ?: 'team@example.com',
+        subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS ✅",
+        body:    "Your build succeeded! ${env.BUILD_URL}"
+      )
     }
     failure {
-      mail to:   env.GIT_COMMITTER_EMAIL ?: 'team@example.com',
-           subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} failed ❌",
-           body:    "Oops, something broke: ${env.BUILD_URL}"
+      mail(
+        to:      env.GIT_COMMITTER_EMAIL ?: 'team@example.com',
+        subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} FAILURE ❌",
+        body:    "Build failed. See console: ${env.BUILD_URL}"
+      )
     }
   }
 }
