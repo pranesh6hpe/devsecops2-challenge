@@ -139,25 +139,24 @@ pipeline {
         echo "✅ Deployed to DEV"
       }
     }
-        stage('DAST Scan with OWASP ZAP') {
-      steps {
-        echo "🕷️ Starting DAST scan with OWASP ZAP"
-        script {
-          def targetUrl = "http://${REGISTRY_HOST.split(':')[0]}:32007"
-          sh """
-            podman run --rm -v \$(pwd):/zap/wrk/:rw -t docker.io/owasp/zap2docker-stable zap-baseline.py \
-              -t ${targetUrl} \
-              -r dast-report.html \
-              -z "-config globalexcludeurl.url_list.regex='.*(logout|signout).*'" || true
-          """
-        }
-        archiveArtifacts artifacts: 'dast-report.html', fingerprint: true
-        echo "✅ DAST report generated and archived"
-      }
+        
+   stage('DAST Scan with OWASP ZAP') {
+  steps {
+    echo "🕷️ Starting DAST scan with OWASP ZAP"
+    script {
+      def targetUrl = "http://${REGISTRY_HOST.split(':')[0]}:32007"
+      sh """
+        podman run --rm -v \$(pwd):/zap/wrk/:rw -t docker.io/owasp/zap2docker-stable zap-baseline.py \
+          -t ${targetUrl} \
+          -r dast-report.html \
+          -z "-config globalexcludeurl.url_list.regex='.*(logout|signout).*'" || true
+      """
     }
+    archiveArtifacts artifacts: 'dast-report.html', fingerprint: true
+    echo "✅ DAST report generated and archived"
+  }
+}
 
-
-   
 
     stage('Approval to PROD') {
       steps {
