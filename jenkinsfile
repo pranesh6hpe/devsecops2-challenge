@@ -141,6 +141,24 @@ pipeline {
       }
     }
 
+stage('DAST Scan (ZAP Plugin)') {
+  steps {
+    zapAttack baseline: true,
+              contextFolders: '',
+              target: 'http://10.25.157.175:32007',
+              job: 'FullScan',
+              reportFileName: 'dap-results.html',
+              failBuildOnFinding: true,
+              additionalArguments: '-config aipscan.maxConfidenceLevel=Medium -config aipscan.maxAlertThreshold=Low'
+  }
+  post {
+    always {
+      archiveArtifacts 'dap-results.html'
+    }
+  }
+}
+
+
     stage('Approval to PROD') {
       steps {
         input message: "Deploy ${APP_NAME}:${IMAGE_TAG} to PROD?"
