@@ -5,7 +5,7 @@ pipeline {
     APP_NAME      = 'devsecops2-challenge'
     REGISTRY_HOST = '10.25.157.175:32030'
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
-    APP_URL       = 'http://10.25.157.175:32007'
+    DEV_URL       = 'http://10.25.157.175:32007'
   }
 
   stages {
@@ -48,8 +48,11 @@ pipeline {
     stage('Build & Push Image') {
       steps {
         script {
-          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-          env.IMAGE     = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
+          env.IMAGE_TAG = sh(
+            returnStdout: true,
+            script: 'git rev-parse --short HEAD'
+          ).trim()
+          env.IMAGE = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
 
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
@@ -100,23 +103,19 @@ pipeline {
     stage('Collect Trivy Reports') {
       steps {
         sh '''
-          # cluster-wide reports
-          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml \
-            > vulnerability-reports.yaml
-          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml \
-            > configaudit-reports.yaml
+          # Operator-level reports
+          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml > vulnerability-reports.yaml
+          kubectl -n trivy-system get configauditreports.aquasecurity.github.io  -o yaml > configaudit-reports.yaml
 
-          # dev namespace (if any)
-          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml \
-            >> vulnerability-reports.yaml || true
-          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml \
-            >> configaudit-reports.yaml    || true
+          # Namespace-scoped (dev) reports, if any
+          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml   >> vulnerability-reports.yaml || true
+          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml    >> configaudit-reports.yaml    || true
 
-          # compose single file
+          # Combine
           echo '---' > combined-trivy-report.yaml
-          cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
-          echo '---'                      >> combined-trivy-report.yaml
-          cat configaudit-reports.yaml    >> combined-trivy-report.yaml
+          cat vulnerability-reports.yaml >> combined-trivy-report.yaml
+          echo '---' >> combined-trivy-report.yaml
+          cat configaudit-reports.yaml  >> combined-trivy-report.yaml
         '''
         archiveArtifacts artifacts: '*.yaml', fingerprint: true
       }
@@ -127,8 +126,7 @@ pipeline {
         sh '''
           echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
           helm upgrade --install "$APP_NAME" chart \
-            --namespace dev \
-            --create-namespace \
+            --namespace dev --create-namespace \
             --set image.repository=$IMAGE_ROOT/$APP_NAME \
             --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull \
@@ -138,44 +136,43 @@ pipeline {
       }
     }
 
-   stage('DAST Scan with ZAP Docker') {
-  agent any
-  steps {
-    // log into Docker Hub using the "docker-cred" credential
-    withDockerRegistry(
-      credentialsId: 'docker-cred',
-      url:          'https://index.docker.io/v1/'
-    ) {
-      // now docker pull will work without "unauthorized" errors:
-      sh 'docker pull owasp/zap2docker-stable:latest'
+    stage('DAST Scan (ZAP Docker)') {
+      steps {
+        script {
+          // log in to Docker Hub
+          withDockerRegistry([credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/']) {
+            sh '''
+              # pull & run ZAP in container
+              docker pull owasp/zap2docker-stable:latest
+              docker run --rm -u root --network host \
+                owasp/zap2docker-stable:latest zap.sh -cmd -addoninstall aipscan
 
-      // spin up ZAP in the background...
-      sh 'docker run --rm -u root --network host quay.io/zaproxy/zaproxy:2.14.0 zap.sh -daemon -port 8090'
-      // ...then do your scans against $APP_URL
-      sh '''
-        zap-full-scan.py \
-          -t ${APP_URL} \
-          -r zap-report.html \
-          -x zap-report.xml \
-          -z "-config aipscan.maxConfidenceLevel=Medium" \
-          -z "-config aipscan.maxAlertThreshold=Low"
-      '''
-    }
-  }
-  post {
-    always {
-      archiveArtifacts artifacts: 'zap-report.html, zap-report.xml'
-    }
-    failure {
-      script {
-        def xml = readFile('zap-report.xml')
-        if (xml.contains('<riskcode>2</riskcode>') || xml.contains('<riskcode>3</riskcode>')) {
-          error "📢 DAST found Medium/High issues, failing build"
+              docker run --rm -u root --network host \
+                owasp/zap2docker-stable:latest \
+                zap-full-scan.py \
+                  -t ${DEV_URL} \
+                  -r dap-results.html \
+                  -x dap-results.xml \
+                  -z "-config aipscan.maxConfidenceLevel=Medium" \
+                  -z "-config aipscan.maxAlertThreshold=Low"
+            '''
+          }
+        }
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'dap-results.html,dap-results.xml', fingerprint: true
+        }
+        failure {
+          script {
+            def xml = readFile('dap-results.xml')
+            if (xml.contains('<riskdesc>') && xml =~ /riskdesc.*(High|Medium)/) {
+              error "⛔ DAST found High/Medium alerts—failing build."
+            }
+          }
         }
       }
     }
-  }
-}
 
     stage('Approval to PROD') {
       steps {
@@ -188,8 +185,7 @@ pipeline {
         sh '''
           echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
           helm upgrade --install "$APP_NAME" chart \
-            --namespace prod \
-            --create-namespace \
+            --namespace prod --create-namespace \
             --set image.repository=$IMAGE_ROOT/$APP_NAME \
             --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull \
@@ -202,23 +198,15 @@ pipeline {
 
   post {
     always { cleanWs() }
-
     success {
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'team@example.com'
-        mail to:       gitEmail,
-             subject:  "${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS ✅",
-             body:     "Build succeeded! See ${env.BUILD_URL}"
-      }
+      mail to:   env.GIT_COMMITTER_EMAIL ?: 'team@example.com',
+           subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} succeeded ✅",
+           body:    "Good news! Your build succeeded: ${env.BUILD_URL}"
     }
-
     failure {
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'team@example.com'
-        mail to:       gitEmail,
-             subject:  "${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED ❌",
-             body:     "Build failed. See logs at ${env.BUILD_URL}"
-      }
+      mail to:   env.GIT_COMMITTER_EMAIL ?: 'team@example.com',
+           subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} failed ❌",
+           body:    "Oops, something broke: ${env.BUILD_URL}"
     }
   }
 }
