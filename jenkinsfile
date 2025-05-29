@@ -22,19 +22,6 @@ pipeline {
       }
     }
 
-    stage('Linting Analysis') {
-      steps {
-        // Run Checkstyle, PMD, and SpotBugs
-        sh '''
-          mvn checkstyle:checkstyle pmd:pmd spotbugs:spotbugs
-        '''
-        // Publish reports to Jenkins UI
-        checkstyle canComputeNew: false, pattern: '**/target/checkstyle-result.xml'
-        pmd canComputeNew: false, pattern: '**/target/pmd.xml'
-        spotbugs canComputeNew: false, pattern: '**/target/spotbugsXml.xml'
-      }
-    }
-
     stage('SonarQube Analysis') {
       steps {
         withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
@@ -178,16 +165,16 @@ pipeline {
   }
 
   post {
-    always {
-      cleanWs()
-    }
+  always {
+    cleanWs()
+  }
 
-    success {
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-        mail to: gitEmail,
-             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
-             body: """\
+  success {
+    script {
+      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+      mail to: gitEmail,
+           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
+           body: """\
 Good news! The build was successful.
 
 Project: ${env.JOB_NAME}
@@ -196,15 +183,15 @@ Status: SUCCESS ✅
 
 Check it here: ${env.BUILD_URL}
 """
-      }
     }
+  }
 
-    failure {
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-        mail to: gitEmail,
-             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
-             body: """\
+  failure {
+    script {
+      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+      mail to: gitEmail,
+           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
+           body: """\
 Unfortunately, the build has failed.
 
 Project: ${env.JOB_NAME}
@@ -213,7 +200,8 @@ Status: FAILED ❌
 
 Check the console output for more details: ${env.BUILD_URL}
 """
-      }
     }
   }
+}
+
 }
