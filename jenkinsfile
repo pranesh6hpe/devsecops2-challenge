@@ -135,21 +135,30 @@ pipeline {
         '''
       }
     }
+
+
 stage('DAST Scan (ZAP Docker)') {
   steps {
     script {
-      // 1) authenticate to Docker Hub
-      withDockerRegistry([credentialsId: 'docker-cred']) {
+      // Use your docker-cred to log in under Podman’s docker-alias
+      withCredentials([usernamePassword(
+        credentialsId: 'docker-cred',
+        usernameVariable: 'DOCKER_USER',
+        passwordVariable: 'DOCKER_PWD'
+      )]) {
         sh '''
-          # pull the ZAP image
+          echo "$DOCKER_PWD" | docker login docker.io \
+            --username "$DOCKER_USER" --password-stdin
+
+          echo "🔽 Pulling ZAP image..."
           docker pull owasp/zap2docker-stable:latest
 
-          # install the AI-Powered add-on
+          echo "🛠 Installing AI-scan add-on..."
           docker run --rm -u root --network host \
             owasp/zap2docker-stable:latest \
             zap.sh -cmd -addoninstall aipscan
 
-          # run full DAST scan against DEV URL
+          echo "🔎 Running full DAST scan..."
           docker run --rm -u root --network host \
             owasp/zap2docker-stable:latest \
             zap-full-scan.py \
@@ -162,21 +171,20 @@ stage('DAST Scan (ZAP Docker)') {
       }
     }
   }
+
   post {
     always {
-      // archive whatever we got
       archiveArtifacts artifacts: 'dap-results.html,dap-results.xml', fingerprint: true
     }
     failure {
       script {
-        // only check XML if it actually exists
         if (fileExists('dap-results.xml')) {
-          def xml = readFile('dap-results.xml')
-          if (xml =~ /<riskdesc>.*(High|Medium)/) {
-            error "⛔ DAST found High/Medium issues—failing build."
+          def xml = readFile('dap-results.xml').toLowerCase()
+          if (xml.contains('riskdesc="medium"') || xml.contains('riskdesc="high"')) {
+            error "⛔ DAST found medium/high issues—failing build."
           }
         } else {
-          echo "⚠️  dap‐results.xml not found; skipping XML severity check."
+          echo "⚠️  dap-results.xml not found; skipping severity check."
         }
       }
     }
