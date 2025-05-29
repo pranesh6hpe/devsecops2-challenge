@@ -138,33 +138,39 @@ pipeline {
       }
     }
 
-   stage('DAST Scan with ZAP Container') {
-  agent {
-    docker {
-      image 'quay.io/zaproxy/zaproxy:2.14.0'
-      args  '-u root --network host'  // so zap can reach your NodePort
+   stage('DAST Scan with ZAP Docker') {
+  agent any
+  steps {
+    // log into Docker Hub using the "docker-cred" credential
+    withDockerRegistry(
+      credentialsId: 'docker-cred',
+      url:          'https://index.docker.io/v1/'
+    ) {
+      // now docker pull will work without "unauthorized" errors:
+      sh 'docker pull owasp/zap2docker-stable:latest'
+
+      // spin up ZAP in the background...
+      sh 'docker run --rm -u root --network host quay.io/zaproxy/zaproxy:2.14.0 zap.sh -daemon -port 8090'
+      // ...then do your scans against $APP_URL
+      sh '''
+        zap-full-scan.py \
+          -t ${APP_URL} \
+          -r zap-report.html \
+          -x zap-report.xml \
+          -z "-config aipscan.maxConfidenceLevel=Medium" \
+          -z "-config aipscan.maxAlertThreshold=Low"
+      '''
     }
   }
-  steps {
-    // run the full scan script directly
-    sh '''
-      zap-full-scan.py \
-        -t ${APP_URL} \
-        -r zap-report.html \
-        -x zap-report.xml \
-        -z "-config aipscan.maxConfidenceLevel=Medium" \
-        -z "-config aipscan.maxAlertThreshold=Low"
-    '''
-    archiveArtifacts artifacts: 'zap-report.html,zap-report.xml', fingerprint: true
-  }
   post {
+    always {
+      archiveArtifacts artifacts: 'zap-report.html, zap-report.xml'
+    }
     failure {
       script {
-        if (fileExists('zap-report.xml')) {
-          def xml = readFile('zap-report.xml')
-          if (xml =~ /<alertitem>.*<riskdesc>.*(High|Medium)/) {
-            error "⛔ DAST found medium/high issues—failing build."
-          }
+        def xml = readFile('zap-report.xml')
+        if (xml.contains('<riskcode>2</riskcode>') || xml.contains('<riskcode>3</riskcode>')) {
+          error "📢 DAST found Medium/High issues, failing build"
         }
       }
     }
