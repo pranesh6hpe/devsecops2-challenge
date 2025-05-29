@@ -10,78 +10,72 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        echo "🔍 Checking out source from Git"
         git url:           'https://github.com/pranesh6hpe/devsecops2-challenge.git',
             branch:        'main',
             credentialsId: 'git-https'
-        echo "✅ Checkout complete"
       }
     }
 
     stage('Build & Test') {
       steps {
-        echo "🛠 Building and running unit tests"
         sh 'mvn clean verify -DskipITs'
-        echo "✅ Build & Test successful"
       }
     }
 
     stage('SonarQube Analysis') {
       steps {
-        echo "🔎 Starting SonarQube analysis"
         withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
           withSonarQubeEnv('SonarQube') {
             sh '''
               mvn sonar:sonar \
                 -Dsonar.projectKey=${APP_NAME} \
-                -Dsonar.token=${SONAR_TOKEN}
+                -Dsonar.login=${SONAR_TOKEN}
             '''
           }
         }
-        echo "✅ SonarQube scan triggered"
       }
     }
 
     stage('Quality Gate') {
       steps {
-        echo "⏱ Waiting for SonarQube quality gate"
         timeout(time: 2, unit: 'MINUTES') {
           waitForQualityGate abortPipeline: true
         }
-        echo "✅ Quality gate passed"
       }
     }
 
     stage('Build & Push Image') {
       steps {
         script {
-          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-          env.IMAGE     = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
-          echo "🖼  Will build image: ${IMAGE}"
+          env.IMAGE_TAG = sh(
+            returnStdout: true,
+            script: 'git rev-parse --short HEAD'
+          ).trim()
+          env.IMAGE = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
 
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
             usernameVariable: 'NEXUS_USER',
             passwordVariable: 'NEXUS_PW'
           )]) {
-            echo "🛠  Building container image using Podman"
-            sh 'podman build --security-opt seccomp=unconfined -t "$IMAGE" .'
+            sh '''
+              echo "🛠  Building $IMAGE"
+              docker build --security-opt seccomp=unconfined -t "$IMAGE" .
 
-            echo "🔐  Logging into Nexus registry"
-            sh 'echo "$NEXUS_PW" | podman login --username "$NEXUS_USER" --password-stdin --tls-verify=false ${REGISTRY_HOST}'
+              echo "🔐  Logging into Nexus (plain HTTP)"
+              echo "$NEXUS_PW" | docker login --tls-verify=false \
+                   --username "$NEXUS_USER" --password-stdin "$REGISTRY_HOST"
 
-            echo "📤  Pushing image to Nexus"
-            sh 'podman push --tls-verify=false "$IMAGE"'
+              echo "📤  Pushing $IMAGE"
+              docker push --tls-verify=false "$IMAGE"
+            '''
           }
-
-          echo "✅ Image build & push complete"
         }
       }
     }
 
     stage('Trivy Image Scan') {
       steps {
-        echo "🔎 Starting Trivy vulnerability scan"
         script {
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
@@ -90,10 +84,8 @@ pipeline {
           )]) {
             sh '''
               IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-              echo "📥 Pulling image before scan"
-              podman pull "$IMAGE"
 
-              echo "🧪 Running Trivy scan"
+              echo "🔎  Trivy scanning $IMAGE"
               trivy image \
                 --username  "$NEXUS_USER" \
                 --password  "$NEXUS_PW" \
@@ -105,108 +97,111 @@ pipeline {
             '''
           }
         }
-        echo "✅ Trivy scan complete"
       }
     }
 
     stage('Collect Trivy Reports') {
       steps {
-        echo "📄 Collecting Trivy operator reports"
         sh '''
-          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml > vulnerability-reports.yaml
-          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml   > configaudit-reports.yaml
-          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml          >> vulnerability-reports.yaml || true
-          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml            >> configaudit-reports.yaml  || true
+          # Operator-level reports
+          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml \
+            > vulnerability-reports.yaml
+          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml \
+            > configaudit-reports.yaml
 
+          # (Optional) namespace-scoped reports in "dev"
+          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml \
+            >> vulnerability-reports.yaml || true
+          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml \
+            >> configaudit-reports.yaml    || true
+
+          # Combine into a single file
           echo '---' > combined-trivy-report.yaml
           cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
           echo '---'                      >> combined-trivy-report.yaml
           cat configaudit-reports.yaml    >> combined-trivy-report.yaml
         '''
         archiveArtifacts artifacts: '*.yaml', fingerprint: true
-        echo "✅ Trivy reports archived"
       }
     }
 
     stage('Deploy to DEV') {
       steps {
-        echo "🚀 Deploying to DEV namespace"
         sh '''
-          helm upgrade --install "${APP_NAME}" chart \
-            --namespace dev --create-namespace \
-            --set image.repository=${IMAGE_ROOT}/${APP_NAME} \
-            --set image.tag=${IMAGE_TAG} \
+          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
+          helm upgrade --install "$APP_NAME" chart \
+            --namespace dev \
+            --create-namespace \
+            --set image.repository=$IMAGE_ROOT/$APP_NAME \
+            --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull \
             --set service.type=NodePort \
             --set service.nodePort=32007
         '''
-        echo "✅ Deployed to DEV"
       }
     }
-stage('DAST Scan with ZAP') {
-  steps {
-    echo "🛡️ Starting OWASP ZAP scan against DEV environment"
-
-    script {
-      def targetURL = 'http://your-node-ip:32007'  // Replace with correct IP/domain if needed
-
-      sh """
-        zap-baseline.py -t ${targetURL} -r zap-report.html || true
-      """
-    }
-
-    archiveArtifacts artifacts: 'zap-report.html', fingerprint: true
-    echo "✅ ZAP scan complete and report archived"
-  }
-}
-
 
     stage('Approval to PROD') {
       steps {
-        echo "🔔 Awaiting manual approval to PROD"
         input message: "Deploy ${APP_NAME}:${IMAGE_TAG} to PROD?"
       }
     }
 
     stage('Deploy to PROD') {
       steps {
-        echo "🚀 Deploying to PROD namespace"
         sh '''
-          helm upgrade --install "${APP_NAME}" chart \
-            --namespace prod --create-namespace \
-            --set image.repository=${IMAGE_ROOT}/${APP_NAME} \
-            --set image.tag=${IMAGE_TAG} \
+          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
+          helm upgrade --install "$APP_NAME" chart \
+            --namespace prod \
+            --create-namespace \
+            --set image.repository=$IMAGE_ROOT/$APP_NAME \
+            --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull \
             --set service.type=NodePort \
             --set service.nodePort=32008
         '''
-        echo "✅ Deployed to PROD"
       }
     }
   }
 
   post {
-    always {
-      echo "🧹 Cleaning up workspace"
-      cleanWs()
-    }
-    success {
-      echo "📬 Sending success email"
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-        mail to: gitEmail,
-             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS ✅",
-             body: "Good news! Build succeeded. See ${env.BUILD_URL}"
-      }
-    }
-    failure {
-      echo "📬 Sending failure email"
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-        mail to: gitEmail,
-             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED ❌",
-             body: "Build failed. Check console output: ${env.BUILD_URL}"
-      }
+  always {
+    cleanWs()
+  }
+
+  success {
+    script {
+      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+      mail to: gitEmail,
+           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
+           body: """\
+Good news! The build was successful.
+
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Status: SUCCESS ✅
+
+Check it here: ${env.BUILD_URL}
+"""
     }
   }
+
+  failure {
+    script {
+      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+      mail to: gitEmail,
+           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
+           body: """\
+Unfortunately, the build has failed.
+
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Status: FAILED ❌
+
+Check the console output for more details: ${env.BUILD_URL}
+"""
+    }
+  }
+}
+
 }
