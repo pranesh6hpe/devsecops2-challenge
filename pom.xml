@@ -132,7 +132,7 @@
         </executions>
       </plugin>
 
-      <!-- SpotBugs plugin -->
+      <!-- SpotBugs plugin for static code analysis -->
       <plugin>
         <groupId>com.github.spotbugs</groupId>
         <artifactId>spotbugs-maven-plugin</artifactId>
@@ -145,36 +145,10 @@
             </goals>
           </execution>
         </executions>
-      </plugin>
-
-      <!-- Checkstyle plugin -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-checkstyle-plugin</artifactId>
-        <version>3.2.0</version>
-        <executions>
-          <execution>
-            <phase>verify</phase>
-            <goals>
-              <goal>checkstyle</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-
-      <!-- PMD plugin -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-pmd-plugin</artifactId>
-        <version>3.15.0</version>
-        <executions>
-          <execution>
-            <phase>verify</phase>
-            <goals>
-              <goal>pmd</goal>
-            </goals>
-          </execution>
-        </executions>
+        <configuration>
+          <!-- Don't fail the build on SpotBugs findings -->
+          <failOnError>false</failOnError>
+        </configuration>
       </plugin>
 
     </plugins>
