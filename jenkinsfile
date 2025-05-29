@@ -141,7 +141,7 @@ pipeline {
    stage('DAST Scan with ZAP Container') {
   agent {
     docker {
-      image 'owasp/zap2docker-stable:latest'
+      image 'docker.io/owasp/zap2docker-stable:latest'
       args  '-u root --network host'  // so zap can reach your NodePort
     }
   }
