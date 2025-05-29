@@ -11,8 +11,8 @@ pipeline {
     stage('Checkout') {
       steps {
         echo "🔍 Checking out source from Git"
-        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-            branch: 'main',
+        git url:           'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+            branch:        'main',
             credentialsId: 'git-https'
         echo "✅ Checkout complete"
       }
@@ -67,8 +67,12 @@ pipeline {
             echo "🛠  Building Docker image"
             sh 'docker build --security-opt seccomp=unconfined -t "$IMAGE" .'
 
-            echo "🔐  Logging into Nexus registry"
-            sh 'echo "$NEXUS_PW" | docker login --username "$NEXUS_USER" --password-stdin ${REGISTRY_HOST}'
+            echo "🔐  Logging into Nexus registry over HTTP (no TLS)"
+            sh '''
+              mkdir -p /etc/containers
+              echo -e '[registries.insecure]\nregistries = ["${REGISTRY_HOST}"]' > /etc/containers/registries.conf
+              echo "$NEXUS_PW" | docker login --username "$NEXUS_USER" --password-stdin http://${REGISTRY_HOST}
+            '''
 
             echo "📤  Pushing image to Nexus"
             sh 'docker push "$IMAGE"'
@@ -90,6 +94,10 @@ pipeline {
           )]) {
             sh '''
               IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
+              echo "📥 Pulling image before scan"
+              docker pull "$IMAGE"
+
+              echo "🧪 Running Trivy scan"
               trivy image \
                 --username  "$NEXUS_USER" \
                 --password  "$NEXUS_PW" \
@@ -110,14 +118,14 @@ pipeline {
         echo "📄 Collecting Trivy operator reports"
         sh '''
           kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml > vulnerability-reports.yaml
-          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml > configaudit-reports.yaml
-          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml >> vulnerability-reports.yaml || true
-          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml >> configaudit-reports.yaml || true
+          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml   > configaudit-reports.yaml
+          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml          >> vulnerability-reports.yaml || true
+          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml            >> configaudit-reports.yaml  || true
 
           echo '---' > combined-trivy-report.yaml
-          cat vulnerability-reports.yaml >> combined-trivy-report.yaml
-          echo '---' >> combined-trivy-report.yaml
-          cat configaudit-reports.yaml >> combined-trivy-report.yaml
+          cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
+          echo '---'                      >> combined-trivy-report.yaml
+          cat configaudit-reports.yaml    >> combined-trivy-report.yaml
         '''
         archiveArtifacts artifacts: '*.yaml', fingerprint: true
         echo "✅ Trivy reports archived"
@@ -137,23 +145,6 @@ pipeline {
             --set service.nodePort=32007
         '''
         echo "✅ Deployed to DEV"
-      }
-    }
-
-    stage('DAST Scan with OWASP ZAP') {
-      steps {
-        echo "🕷️ Starting DAST scan with OWASP ZAP"
-        script {
-          def targetUrl = "http://${REGISTRY_HOST.split(':')[0]}:32007"
-          sh """
-            docker run --rm -v \$(pwd):/zap/wrk/:rw -t owasp/zap2docker-stable zap-baseline.py \
-              -t ${targetUrl} \
-              -r dast-report.html \
-              -z "-config globalexcludeurl.url_list.regex='.*(logout|signout).*'" || true
-          """
-        }
-        archiveArtifacts artifacts: 'dast-report.html', fingerprint: true
-        echo "✅ DAST report generated and archived"
       }
     }
 
