@@ -5,6 +5,7 @@ pipeline {
     APP_NAME      = 'devsecops2-challenge'
     REGISTRY_HOST = '10.25.157.175:32030'
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
+    APP_URL       = 'http://10.25.157.175:32007'
   }
 
   stages {
@@ -47,11 +48,8 @@ pipeline {
     stage('Build & Push Image') {
       steps {
         script {
-          env.IMAGE_TAG = sh(
-            returnStdout: true,
-            script: 'git rev-parse --short HEAD'
-          ).trim()
-          env.IMAGE = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
+          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          env.IMAGE     = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
 
           withCredentials([usernamePassword(
             credentialsId: 'nexus-cred',
@@ -84,11 +82,10 @@ pipeline {
           )]) {
             sh '''
               IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-
               echo "🔎  Trivy scanning $IMAGE"
               trivy image \
-                --username  "$NEXUS_USER" \
-                --password  "$NEXUS_PW" \
+                --username "$NEXUS_USER" \
+                --password "$NEXUS_PW" \
                 --insecure \
                 --ignore-unfixed \
                 --severity HIGH,CRITICAL \
@@ -103,19 +100,19 @@ pipeline {
     stage('Collect Trivy Reports') {
       steps {
         sh '''
-          # Operator-level reports
+          # cluster-wide reports
           kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml \
             > vulnerability-reports.yaml
           kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml \
             > configaudit-reports.yaml
 
-          # (Optional) namespace-scoped reports in "dev"
+          # dev namespace (if any)
           kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml \
             >> vulnerability-reports.yaml || true
           kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml \
             >> configaudit-reports.yaml    || true
 
-          # Combine into a single file
+          # compose single file
           echo '---' > combined-trivy-report.yaml
           cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
           echo '---'                      >> combined-trivy-report.yaml
@@ -141,23 +138,47 @@ pipeline {
       }
     }
 
-stage('DAST Scan (ZAP Plugin)') {
-  steps {
-    zapAttack baseline: true,
-              contextFolders: '',
-              target: 'http://10.25.157.175:32007',
-              job: 'FullScan',
-              reportFileName: 'dap-results.html',
-              failBuildOnFinding: true,
-              additionalArguments: '-config aipscan.maxConfidenceLevel=Medium -config aipscan.maxAlertThreshold=Low'
-  }
-  post {
-    always {
-      archiveArtifacts 'dap-results.html'
-    }
-  }
-}
+    stage('DAST Scan with ZAP Plugin') {
+      steps {
+        script {
+          // 1) start ZAP in daemon mode
+          startZap(daemon: true, port: 8090)
 
+          // 2) optional spider
+          runZapCrawler(
+            target:      APP_URL,
+            contextName: 'default',
+            maxChildren: 5
+          )
+
+          // 3) active scan
+          runZapAttack(
+            target:          APP_URL,
+            contextName:     'default',
+            reportFileName:  'dap-results.html',
+            reportFileType:  'HTML',
+            extraArgs:       '-config aipscan.maxConfidenceLevel=Medium -config aipscan.maxAlertThreshold=Low'
+          )
+
+          // 4) stop ZAP
+          stopZap()
+
+          // 5) archive the HTML report
+          archiveZap artifacts: 'dap-results.html'
+        }
+      }
+      post {
+        failure {
+          script {
+            // fail build if any medium/high alerts
+            def report = readFile('dap-results.html').toLowerCase()
+            if (report.contains('risk="medium"') || report.contains('risk="high"')) {
+              error "DAST found medium/high issues — failing build"
+            }
+          }
+        }
+      }
+    }
 
     stage('Approval to PROD') {
       steps {
@@ -183,43 +204,24 @@ stage('DAST Scan (ZAP Plugin)') {
   }
 
   post {
-  always {
-    cleanWs()
-  }
+    always { cleanWs() }
 
-  success {
-    script {
-      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-      mail to: gitEmail,
-           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
-           body: """\
-Good news! The build was successful.
+    success {
+      script {
+        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'team@example.com'
+        mail to:       gitEmail,
+             subject:  "${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS ✅",
+             body:     "Build succeeded! See ${env.BUILD_URL}"
+      }
+    }
 
-Project: ${env.JOB_NAME}
-Build Number: ${env.BUILD_NUMBER}
-Status: SUCCESS ✅
-
-Check it here: ${env.BUILD_URL}
-"""
+    failure {
+      script {
+        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'team@example.com'
+        mail to:       gitEmail,
+             subject:  "${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED ❌",
+             body:     "Build failed. See logs at ${env.BUILD_URL}"
+      }
     }
   }
-
-  failure {
-    script {
-      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-      mail to: gitEmail,
-           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
-           body: """\
-Unfortunately, the build has failed.
-
-Project: ${env.JOB_NAME}
-Build Number: ${env.BUILD_NUMBER}
-Status: FAILED ❌
-
-Check the console output for more details: ${env.BUILD_URL}
-"""
-    }
-  }
-}
-
 }
