@@ -138,47 +138,38 @@ pipeline {
       }
     }
 
-    stage('DAST Scan with ZAP Plugin') {
-      steps {
-        script {
-          // 1) start ZAP in daemon mode
-          startZap(daemon: true, port: 8090)
-
-          // 2) optional spider
-          runZapCrawler(
-            target:      APP_URL,
-            contextName: 'default',
-            maxChildren: 5
-          )
-
-          // 3) active scan
-          runZapAttack(
-            target:          APP_URL,
-            contextName:     'default',
-            reportFileName:  'dap-results.html',
-            reportFileType:  'HTML',
-            extraArgs:       '-config aipscan.maxConfidenceLevel=Medium -config aipscan.maxAlertThreshold=Low'
-          )
-
-          // 4) stop ZAP
-          stopZap()
-
-          // 5) archive the HTML report
-          archiveZap artifacts: 'dap-results.html'
-        }
-      }
-      post {
-        failure {
-          script {
-            // fail build if any medium/high alerts
-            def report = readFile('dap-results.html').toLowerCase()
-            if (report.contains('risk="medium"') || report.contains('risk="high"')) {
-              error "DAST found medium/high issues — failing build"
-            }
+   stage('DAST Scan with ZAP Container') {
+  agent {
+    docker {
+      image 'owasp/zap2docker-stable:latest'
+      args  '-u root --network host'  // so zap can reach your NodePort
+    }
+  }
+  steps {
+    // run the full scan script directly
+    sh '''
+      zap-full-scan.py \
+        -t ${APP_URL} \
+        -r zap-report.html \
+        -x zap-report.xml \
+        -z "-config aipscan.maxConfidenceLevel=Medium" \
+        -z "-config aipscan.maxAlertThreshold=Low"
+    '''
+    archiveArtifacts artifacts: 'zap-report.html,zap-report.xml', fingerprint: true
+  }
+  post {
+    failure {
+      script {
+        if (fileExists('zap-report.xml')) {
+          def xml = readFile('zap-report.xml')
+          if (xml =~ /<alertitem>.*<riskdesc>.*(High|Medium)/) {
+            error "⛔ DAST found medium/high issues—failing build."
           }
         }
       }
     }
+  }
+}
 
     stage('Approval to PROD') {
       steps {
