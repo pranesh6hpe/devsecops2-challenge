@@ -150,7 +150,7 @@ print(f"📄 Size      : {fp.stat().st_size} bytes")
 print("📄 First 25 lines:")
 print("-"*72)
 for i, line in enumerate(fp.open()):
-    if i >= 25:
+    if i >= 200:
         break
     sys.stdout.write(line)
 print("-"*72)
