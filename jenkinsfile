@@ -173,7 +173,7 @@ Requirements:
 USER = f"Git commits since last release:\\n```\\n{commits}\\n```"
 
 resp = client.chat.completions.create(
-    model="mixtral-8x7b-chat",
+    model="llama3-70b-8192",
     temperature=0.3,
     messages=[
         {"role": "system", "content": SYSTEM},
