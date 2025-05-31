@@ -58,10 +58,10 @@ pipeline {
                                             usernameVariable: 'NEXUS_USER',
                                             passwordVariable: 'NEXUS_PW')]) {
             sh '''
-              echo "🛠  Building $IMAGE"
+              echo " Building $IMAGE"
               docker build --security-opt seccomp=unconfined -t "$IMAGE" .
 
-              echo "🔐  Logging into Nexus (plain HTTP)"
+              echo "  Logging into Nexus (plain HTTP)"
               echo "$NEXUS_PW" | docker login --tls-verify=false \
                    --username "$NEXUS_USER" --password-stdin "$REGISTRY_HOST"
 
@@ -82,7 +82,7 @@ pipeline {
                                             passwordVariable: 'NEXUS_PW')]) {
             sh '''
               IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-              echo "🔎  Trivy scanning $IMAGE"
+              echo " Trivy scanning $IMAGE"
               trivy image \
                 --username  "$NEXUS_USER" \
                 --password  "$NEXUS_PW" \
@@ -123,22 +123,42 @@ pipeline {
     withCredentials([string(credentialsId: 'groq-key', variable: 'GROQ_API_KEY')]) {
       sh '''
         set -e
+
         # Get last 200 commit messages
         git --no-pager log -n 200 --pretty=format:"%h %<(72,trunc)%s" > commits.txt
 
         python3 - <<'PY'
-import subprocess, sys, os, pathlib, textwrap
+import subprocess, sys, os, pathlib, textwrap, time, random
 
-# One-time SDK install
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user", "openai>=1.13.3"], check=True)
-
+# Install required packages
+subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user", "openai>=1.13.3", "pyfiglet"], check=True)
+from pyfiglet import Figlet
 import openai
 
+# Setup Groq client
 client = openai.OpenAI(
     base_url="https://api.groq.com/openai/v1",
     api_key=os.environ["GROQ_API_KEY"]
 )
 
+# Show fancy banner
+banner = Figlet(font='slant').renderText('Release Notes')
+print(f"\\033[95m{banner}\\033[0m")  # Purple slanted title
+
+# Loading animation
+print("🤖 Generating AI Release Notes", end="", flush=True)
+for _ in range(5):
+    time.sleep(0.4)
+    print(".", end="", flush=True)
+print(" Done!\\n")
+
+# Fireworks!
+colors = [91, 92, 93, 94, 95, 96]
+for _ in range(12):
+    print(f"\\033[{random.choice(colors)}m{'*' * random.randint(10, 50)}\\033[0m")
+    time.sleep(0.05)
+
+# Read commits
 commits_path = pathlib.Path("commits.txt")
 if not commits_path.exists() or not commits_path.read_text().strip():
     print("No commits found – skipping AI release notes"); sys.exit(0)
@@ -149,15 +169,15 @@ You are an expert technical writer and changelog specialist.
 Your job is to generate *developer-focused release notes* based on Git commit messages.
 Write a markdown changelog grouped by category such as:
 
-### Features
+### 🎉 Features
 - ...
-### Fixes
+### 🐞 Fixes
 - ...
-### Infra / CI
+### 🚀 Infra / CI
 - ...
-### Security
+### 🔒 Security
 - ...
-### Tests
+### 🧪 Tests
 - ...
 
 Avoid "misc" or "chore" unless absolutely necessary. Exclude commits like "merge", "fix typo", or "update README".
@@ -182,7 +202,8 @@ resp = client.chat.completions.create(
 )
 
 notes = resp.choices[0].message.content.strip()
-print("\\n===== AI-Generated Release Notes =====\\n")
+
+print("\\n\\033[92m===== 🎊 AI-Generated Release Notes 🎊 =====\\033[0m\\n")
 print(notes)
 pathlib.Path("release-notes.md").write_text(notes + "\\n")
 PY
@@ -192,11 +213,12 @@ PY
   }
 }
 
+
     /* ───────────────────────────  DEPLOY DEV  ───────────────────────── */
     stage('Deploy to DEV') {
       steps {
         sh '''
-          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
+          echo "  Deploying $APP_NAME:${IMAGE_TAG} to dev"
           helm upgrade --install "$APP_NAME" chart \
             --namespace dev --create-namespace \
             --set image.repository=$IMAGE_ROOT/$APP_NAME \
@@ -216,7 +238,7 @@ PY
     stage('Deploy to PROD') {
       steps {
         sh '''
-          echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
+          echo " Deploying $APP_NAME:${IMAGE_TAG} to prod"
           helm upgrade --install "$APP_NAME" chart \
             --namespace prod --create-namespace \
             --set image.repository=$IMAGE_ROOT/$APP_NAME \
