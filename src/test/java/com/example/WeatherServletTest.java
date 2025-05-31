@@ -6,7 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
+import java.io.IOException;               // <-- added
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
@@ -22,7 +22,7 @@ class WeatherServletTest {
         // stub servlet that skips real HTTP calls
         var servlet = new HelloServer.WeatherServlet() {
             @Override
-            protected JsonNode getJson(String any) {          // ← protected
+            protected JsonNode getJson(String any) throws IOException {   // <-- now declares
                 // two different responses: geocoding & forecast
                 if (any.contains("geocoding")) {
                     return new ObjectMapper().readTree("""
@@ -65,7 +65,7 @@ class WeatherServletTest {
     void returns502OnUpstreamFailure() throws Exception {
         var servlet = new HelloServer.WeatherServlet() {
             @Override
-            protected JsonNode getJson(String any) throws IOException { // ← protected
+            protected JsonNode getJson(String any) throws IOException {   // already correct
                 throw new IOException("boom");
             }
         };
