@@ -24,25 +24,7 @@ pipeline {
       }
     }
 
-          /* ───────────────────  AI Unit-Tests (EvoSuite) ─────────────────── */
-    stage('AI Unit-Tests (EvoSuite)') {
-      steps {
-        // 1) Compile main classes without running existing tests
-        sh 'mvn test-compile -q'
-
-        // 2) Generate EvoSuite tests into src/test/java using plugin v1.0.7
-        sh '''
-          mvn org.evosuite:evosuite-maven-plugin:1.0.7:generate \
-              -DprojectCP=target/classes \
-              -Devosuite.outputDirectory=src/test/java \
-              -DgenerateTestsBundle=true \
-              -Dsearch_budget=60
-        '''
-
-        // 3) Run all unit tests (including newly generated ones)
-        sh 'mvn test -q'
-      }
-    }
+  
 
 
 
@@ -152,6 +134,67 @@ pipeline {
         archiveArtifacts artifacts: '*.yaml', fingerprint: true
       }
     }
+
+/* ───────────────  AI Release Notes (Groq)  ─────────────── */
+stage('AI Release Notes (Groq)') {
+  when { expression { currentBuild.currentResult == 'SUCCESS' } }
+  steps {
+    withCredentials([string(credentialsId: 'groq-key',
+                            variable: 'GROQ_API_KEY')]) {
+
+      sh '''
+        set -e
+        # 1) Grab the last 200 commit lines that constitute this build
+        git --no-pager log -n 200 --pretty=format:"%h %<(70,trunc)%s" > commits.txt
+
+        # 2) Use Groq’s OpenAI-compatible endpoint to turn them into Markdown
+        python3 - <<'PY'
+import os, textwrap, pathlib, openai
+
+# --- Groq client ------------------------------------------------------------
+client = openai.OpenAI(
+    base_url = "https://api.groq.com/openai/v1",      # :contentReference[oaicite:0]{index=0}
+    api_key  = os.environ["GROQ_API_KEY"]
+)
+
+# --- read git commits -------------------------------------------------------
+commits_file = pathlib.Path("commits.txt")
+if not commits_file.exists() or not commits_file.read_text().strip():
+    print("No commits found – skipping AI release notes"); exit(0)
+commits = commits_file.read_text()
+
+# --- prompt -----------------------------------------------------------------
+SYSTEM = textwrap.dedent(\"\"\"\
+You are an expert release-notes writer.
+Turn the commit list into concise, human-readable release notes:
+• Group similar changes
+• Skip merge/chore commits
+• ≤ 200 words
+Return valid Markdown starting with “### Highlights”
+\"\"\")
+USER = f"Git commits since last release:\\n```\\n{commits}\\n```"
+
+# --- call Groq --------------------------------------------------------------
+resp = client.chat.completions.create(               # OpenAI-v1 style :contentReference[oaicite:1]{index=1}
+    model       = "mixtral-8x7b-chat",               # fast, \~8 ¢ / M-tokens :contentReference[oaicite:2]{index=2}
+    temperature = 0.3,
+    messages    = [
+        {"role":"system","content": SYSTEM},
+        {"role":"user",  "content": USER}
+    ]
+)
+
+notes = resp.choices[0].message.content.strip()
+print("\\n===== AI-Generated Release Notes =====\\n")
+print(notes)
+pathlib.Path("release-notes.md").write_text(notes + "\\n")
+PY
+      '''
+      archiveArtifacts artifacts: 'release-notes.md', fingerprint: true
+    }
+  }
+}
+
 
 
 
