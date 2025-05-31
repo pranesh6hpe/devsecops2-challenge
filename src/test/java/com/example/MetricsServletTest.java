@@ -46,7 +46,6 @@ class MetricsServletTest {
         String result = out.toString();
         assertFalse(result.isBlank(), "Expected Prometheus output to be non-empty");
 
-        // 8) (Optional) You can also spot-check that our dummy_metric shows up:
-        // assertTrue(result.contains("dummy_metric_total"), "Expected dummy_metric_total in scrape output");
+        
     }
 }
