@@ -125,6 +125,59 @@ pipeline {
       }
     }
 
+    stage('AI Vulnerability Triage (Gemini)') {
+  steps {
+    withCredentials([string(credentialsId: 'gemini-key', variable: 'GEMINI_API_KEY')]) {
+      sh '''
+        python3 - <<'PY'
+import os, json, yaml, pathlib, textwrap, sys
+import subprocess, google.generativeai as genai
+
+# ensure SDK present even if VM is rebuilt
+subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "google-generativeai>=0.4"], check=True)
+
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-pro")
+
+fp = pathlib.Path("combined-trivy-report.yaml")
+if not fp.exists():
+    print("❌ combined-trivy-report.yaml not found"); sys.exit(1)
+
+docs = list(yaml.safe_load_all(fp.read_text()))
+items = [it for d in docs if isinstance(d, dict) and "items" in d for it in d["items"]]
+crit  = [i for i in items if str(i.get("severity")).upper() in ("HIGH","CRITICAL")]
+
+if not crit:
+    print("👍 No HIGH/CRITICAL findings – skipping Gemini triage."); sys.exit(0)
+
+prompt = textwrap.dedent(\"\"\"\
+You are a cloud security expert. Given this JSON array of Trivy HIGH/CRITICAL
+findings, list the 10 most urgent CVEs (one-line justification each) and then
+suggest the top 3 remediation actions that will eliminate the largest number
+of findings. Output markdown exactly in this template:
+
+### Urgent CVEs
+| Rank | CVE | Reason |
+### Recommended Fixes
+1. ...
+2. ...
+3. ...\"\"\")
+
+resp = model.generate_content(
+  [ { "role":"system", "content": prompt },
+    { "role":"user",   "content": json.dumps(crit)[:12000] } ],
+  generation_config = { "temperature": 0.2 }
+)
+
+print("\\n===== Gemini vulnerability triage =====\\n")
+print(resp.text)
+PY
+      '''
+    }
+  }
+}
+
+
     stage('Deploy to DEV') {
       steps {
         sh '''
