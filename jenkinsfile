@@ -118,18 +118,18 @@ pipeline {
 
     /* ───────────────────  AI RELEASE NOTES (GROQ)  ─────────────────── */
     stage('AI Release Notes (Groq)') {
-      when { expression { currentBuild.currentResult == 'SUCCESS' } }
-      steps {
-        withCredentials([string(credentialsId: 'groq-key', variable: 'GROQ_API_KEY')]) {
-          sh '''
-            set -e
-            # fetch last 200 commit lines
-            git --no-pager log -n 200 --pretty=format:"%h %<(70,trunc)%s" > commits.txt
+  when { expression { currentBuild.currentResult == 'SUCCESS' } }
+  steps {
+    withCredentials([string(credentialsId: 'groq-key', variable: 'GROQ_API_KEY')]) {
+      sh '''
+        set -e
+        # Get last 200 commit messages
+        git --no-pager log -n 200 --pretty=format:"%h %<(72,trunc)%s" > commits.txt
 
-            python3 - <<'PY'
+        python3 - <<'PY'
 import subprocess, sys, os, pathlib, textwrap
 
-# one-time SDK install (cached thereafter)
+# One-time SDK install
 subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user", "openai>=1.13.3"], check=True)
 
 import openai
@@ -145,30 +145,52 @@ if not commits_path.exists() or not commits_path.read_text().strip():
 
 commits = commits_path.read_text()
 SYSTEM = textwrap.dedent(\"\"\"\
-You are an expert release-notes writer.
-Condense the commit list into a concise, user-friendly changelog (<200 words).
-Group similar items, drop merge/chore commits and start with “### Highlights”.
+You are an expert technical writer and changelog specialist.
+Your job is to generate *developer-focused release notes* based on Git commit messages.
+Write a markdown changelog grouped by category such as:
+
+### Features
+- ...
+### Fixes
+- ...
+### Infra / CI
+- ...
+### Security
+- ...
+### Tests
+- ...
+
+Avoid "misc" or "chore" unless absolutely necessary. Exclude commits like "merge", "fix typo", or "update README".
+
+Requirements:
+- Prioritize technical clarity and usefulness.
+- Mention file names or modules where possible.
+- Combine related commits.
+- Highlight security, performance, or deployment changes.
+- Use bullet points. Limit to ~200 words.
 \"\"\")
+
 USER = f"Git commits since last release:\\n```\\n{commits}\\n```"
 
 resp = client.chat.completions.create(
-    model="llama3-8b-8192",
+    model="mixtral-8x7b-chat",
     temperature=0.3,
     messages=[
         {"role": "system", "content": SYSTEM},
         {"role": "user",   "content": USER}
     ]
 )
+
 notes = resp.choices[0].message.content.strip()
 print("\\n===== AI-Generated Release Notes =====\\n")
 print(notes)
 pathlib.Path("release-notes.md").write_text(notes + "\\n")
 PY
-          '''
-          archiveArtifacts artifacts: 'release-notes.md', fingerprint: true
-        }
-      }
+      '''
+      archiveArtifacts artifacts: 'release-notes.md', fingerprint: true
     }
+  }
+}
 
     /* ───────────────────────────  DEPLOY DEV  ───────────────────────── */
     stage('Deploy to DEV') {
