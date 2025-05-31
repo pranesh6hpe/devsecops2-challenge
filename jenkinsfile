@@ -125,49 +125,47 @@ pipeline {
       }
     }
 
-    stage('AI Vulnerability Triage (Gemini)') {
+stage('AI Vulnerability Triage (Gemini)') {
   steps {
-    withCredentials([string(credentialsId: 'gemini-key', variable: 'GEMINI_API_KEY')]) {
+    withCredentials([string(credentialsId: 'gemini-key',
+                            variable: 'GEMINI_API_KEY')]) {
+
       sh '''
         python3 - <<'PY'
-import os, json, yaml, pathlib, textwrap, sys
-import subprocess, google.generativeai as genai
+import os, sys, subprocess, json, yaml, pathlib, textwrap
 
-# ensure SDK present even if VM is rebuilt
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "google-generativeai>=0.4"], check=True)
+# 1) Ensure the SDK is present **for the jenkins user** running this job.
+subprocess.run([sys.executable, "-m", "pip", "install",
+                "--quiet", "--user", "google-generativeai>=0.8.5"],
+               check=True)
 
+# 2) Now it’s safe to import the package.
+import google.generativeai as genai
+
+# 3) Configure Gemini
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 model = genai.GenerativeModel("gemini-pro")
 
+# 4) Load Trivy YAML
 fp = pathlib.Path("combined-trivy-report.yaml")
 if not fp.exists():
     print("❌ combined-trivy-report.yaml not found"); sys.exit(1)
 
-docs = list(yaml.safe_load_all(fp.read_text()))
-items = [it for d in docs if isinstance(d, dict) and "items" in d for it in d["items"]]
-crit  = [i for i in items if str(i.get("severity")).upper() in ("HIGH","CRITICAL")]
+docs   = list(yaml.safe_load_all(fp.read_text()))
+items  = [it for d in docs if isinstance(d, dict) and "items" in d for it in d["items"]]
+crit   = [i for i in items if str(i.get("severity")).upper() in ("HIGH", "CRITICAL")]
 
 if not crit:
-    print("👍 No HIGH/CRITICAL findings – skipping Gemini triage."); sys.exit(0)
+    print("👍  No HIGH/CRITICAL findings — skipping Gemini triage."); sys.exit(0)
 
-prompt = textwrap.dedent(\"\"\"\
-You are a cloud security expert. Given this JSON array of Trivy HIGH/CRITICAL
-findings, list the 10 most urgent CVEs (one-line justification each) and then
-suggest the top 3 remediation actions that will eliminate the largest number
-of findings. Output markdown exactly in this template:
-
-### Urgent CVEs
-| Rank | CVE | Reason |
-### Recommended Fixes
-1. ...
-2. ...
-3. ...\"\"\")
+payload = json.dumps(crit)[:12000]   # keep request < 12 kB
+system  = textwrap.dedent(\"\"\"\
+You are a cloud security expert … [same prompt as before]\"\"\")
 
 resp = model.generate_content(
-  [ { "role":"system", "content": prompt },
-    { "role":"user",   "content": json.dumps(crit)[:12000] } ],
-  generation_config = { "temperature": 0.2 }
-)
+        [ {"role":"system", "content": system},
+          {"role":"user",   "content": payload}],
+        generation_config={"temperature": 0.2})
 
 print("\\n===== Gemini vulnerability triage =====\\n")
 print(resp.text)
@@ -176,6 +174,7 @@ PY
     }
   }
 }
+
 
 
     stage('Deploy to DEV') {
