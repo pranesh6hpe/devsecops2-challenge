@@ -8,10 +8,12 @@ pipeline {
   }
 
   stages {
+
+    /* ──────────────────────────  SOURCE + BUILD  ────────────────────────── */
     stage('Checkout') {
       steps {
-        git url:           'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-            branch:        'main',
+        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+            branch: 'main',
             credentialsId: 'git-https'
       }
     }
@@ -22,6 +24,7 @@ pipeline {
       }
     }
 
+    /* ──────────────────────────  SONAR  ────────────────────────── */
     stage('SonarQube Analysis') {
       steps {
         withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
@@ -44,6 +47,7 @@ pipeline {
       }
     }
 
+    /* ──────────────────────────  BUILD IMAGE  ────────────────────────── */
     stage('Build & Push Image') {
       steps {
         script {
@@ -74,6 +78,7 @@ pipeline {
       }
     }
 
+    /* ──────────────────────────  TRIVY IMAGE SCAN  ────────────────────────── */
     stage('Trivy Image Scan') {
       steps {
         script {
@@ -100,6 +105,7 @@ pipeline {
       }
     }
 
+    /* ──────────────────────────  COLLECT OPERATOR REPORTS  ────────────────────────── */
     stage('Collect Trivy Reports') {
       steps {
         sh '''
@@ -117,86 +123,70 @@ pipeline {
 
           # Combine into a single file
           echo '---' > combined-trivy-report.yaml
-          cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
-          echo '---'                      >> combined-trivy-report.yaml
-          cat configaudit-reports.yaml    >> combined-trivy-report.yaml
+          cat vulnerability-reports.yaml >> combined-trivy-report.yaml
+          echo '---'                     >> combined-trivy-report.yaml
+          cat configaudit-reports.yaml   >> combined-trivy-report.yaml
         '''
         archiveArtifacts artifacts: '*.yaml', fingerprint: true
       }
     }
 
-stage('AI Vulnerability Triage (Gemini)') {
-  steps {
-    withCredentials([string(credentialsId: 'gemini-key',
-                            variable: 'GEMINI_API_KEY')]) {
-
-      sh '''
-        python3 - <<'PY'
+    /* ──────────────────────────  AI TRIAGE WITH GEMINI  ────────────────────────── */
+    stage('AI Vulnerability Triage (Gemini)') {
+      steps {
+        withCredentials([string(credentialsId: 'gemini-key', variable: 'GEMINI_API_KEY')]) {
+          sh '''
+            python3 - <<'PY'
 import os, sys, subprocess, json, yaml, pathlib, textwrap
 
-# ── 1. Ensure Gemini SDK is installed ─────────────────────────────────────────
-subprocess.run(
-    [sys.executable, "-m", "pip", "install", "--quiet", "--user",
-     "google-generativeai>=0.8.5"],
-    check=True)
+# 1) Ensure SDK
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet', '--user',
+                'google-generativeai>=0.8.5'], check=True)
 import google.generativeai as genai
 
-# ── 2. Locate and preview combined-trivy-report.yaml ─────────────────────────
-fp = pathlib.Path("combined-trivy-report.yaml")
+# 2) Read report
+fp = pathlib.Path('combined-trivy-report.yaml')
 if not fp.exists():
-    print("❌  combined-trivy-report.yaml NOT found"); sys.exit(1)
+    print('❌  combined-trivy-report.yaml not found'); sys.exit(1)
 
-print(f"📄 File path : {fp.resolve()}")
-print(f"📄 Size      : {fp.stat().st_size} bytes")
-print("📄 First 25 lines:")
-print("-"*72)
-for i, line in enumerate(fp.open()):
-    if i >= 25:
-        break
-    sys.stdout.write(line)
-print("-"*72)
+print(f'📄 File path : {fp.resolve()}')
+print(f'📄 Size      : {fp.stat().st_size} bytes')
+for idx, ln in enumerate(fp.open()):
+    if idx == 25: break
+    sys.stdout.write(ln)
+print('-' * 72)
 
-# ── 3. Parse VulnerabilityReports ─────────────────────────────────────────────
-docs    = list(yaml.safe_load_all(fp.read_text()))
-reports = [
-    d for d in docs
-    if isinstance(d, dict) and d.get("kind") == "VulnerabilityReport"
-] + [
-    it for doc in docs 
-    if isinstance(doc, dict) and "items" in doc
-    for it in doc["items"]
-    if isinstance(it, dict) and it.get("kind") == "VulnerabilityReport"
+docs = list(yaml.safe_load_all(fp.read_text()))
+reports = [d for d in docs if isinstance(d, dict) and d.get('kind') == 'VulnerabilityReport']
+reports += [
+    it for d in docs if isinstance(d, dict) and 'items' in d
+    for it in d['items']
+    if isinstance(it, dict) and it.get('kind') == 'VulnerabilityReport'
 ]
 
-vulns = []
-for rpt in reports:
-    vulns.extend(rpt.get("report", {}).get("vulnerabilities", []))
+vulns = [v for r in reports for v in r.get('report', {}).get('vulnerabilities', [])]
+crit  = [v for v in vulns if str(v.get('severity')).upper() in ('HIGH', 'CRITICAL')]
 
-crit = [
-    v for v in vulns
-    if str(v.get("severity")).upper() in ("HIGH", "CRITICAL")
-]
-
-print(f"🔎 VulnerabilityReports : {len(reports)}")
-print(f"🔎 Vulnerabilities      : {len(vulns)}")
-print(f"🔎 HIGH/CRITICAL        : {len(crit)}")
+print(f'🔎 VulnerabilityReports : {len(reports)}')
+print(f'🔎 Vulnerabilities      : {len(vulns)}')
+print(f'🔎 HIGH/CRITICAL        : {len(crit)}')
 
 if not crit:
-    print("👍  No HIGH/CRITICAL findings — skipping Gemini triage.")
+    print('👍  No HIGH/CRITICAL findings — skipping Gemini triage.')
     sys.exit(0)
 
-# ── 4. Build prompt & call Gemini ─────────────────────────────────────────────
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-model = genai.GenerativeModel("gemini-pro")
+# 3) Gemini call
+genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+model = genai.GenerativeModel('gemini-pro')
 
-system_prompt = textwrap.dedent("""\
+system_prompt = textwrap.dedent(\"\"\"\
 You are a cloud-security expert. Given the JSON array of HIGH/CRITICAL Trivy
-findings below, do the following:
+findings below:
 
 1. List the 10 most urgent CVEs with a one-line justification each.
-2. Suggest the top 3 remediation actions that would remove or mitigate the
-   largest number of findings.
-3. Group identical package+version findings when helpful.
+2. Recommend the 3 remediation actions that mitigate the largest number of
+   findings.
+3. Group duplicates (same package + version) when useful.
 
 Return **strict markdown**:
 
@@ -206,17 +196,15 @@ Return **strict markdown**:
 1. ...
 2. ...
 3. ...
-""")
+\"\"\")
 
-payload_json = json.dumps(crit)[:12000]  # keep under ~12 KB
-
-# Build a single f-string with triple quotes to avoid unterminated literal errors
-prompt = f"""{system_prompt}
+payload_json = json.dumps(crit)[:12000]   # ≈12 kB cap
+prompt = f\"\"\"{system_prompt}
 
 JSON Findings (truncated):
 ```json
 {payload_json}
-```"""
+```\"\"\"
 
 response = genai.generate(
     model=model,
@@ -224,18 +212,15 @@ response = genai.generate(
     temperature=0.2
 )
 
-print("\n===== Gemini vulnerability triage =====\n")
+print('\\n===== Gemini vulnerability triage =====\\n')
 print(response.text)
 PY
-      '''
+          '''
+        }
+      }
     }
-  }
-}
 
-
-
-
-
+    /* ──────────────────────────  DEPLOY DEV  ────────────────────────── */
     stage('Deploy to DEV') {
       steps {
         sh '''
@@ -252,6 +237,7 @@ PY
       }
     }
 
+    /* ──────────────────────────  APPROVAL + PROD  ────────────────────────── */
     stage('Approval to PROD') {
       steps {
         input message: "Deploy ${APP_NAME}:${IMAGE_TAG} to PROD?"
@@ -275,17 +261,18 @@ PY
     }
   }
 
+  /* ──────────────────────────  POST ACTIONS  ────────────────────────── */
   post {
-  always {
-    cleanWs()
-  }
+    always {
+      cleanWs()
+    }
 
-  success {
-    script {
-      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-      mail to: gitEmail,
-           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
-           body: """\
+    success {
+      script {
+        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+        mail to: gitEmail,
+             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
+             body: """\
 Good news! The build was successful.
 
 Project: ${env.JOB_NAME}
@@ -294,15 +281,15 @@ Status: SUCCESS ✅
 
 Check it here: ${env.BUILD_URL}
 """
+      }
     }
-  }
 
-  failure {
-    script {
-      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-      mail to: gitEmail,
-           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
-           body: """\
+    failure {
+      script {
+        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+        mail to: gitEmail,
+             subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
+             body: """\
 Unfortunately, the build has failed.
 
 Project: ${env.JOB_NAME}
@@ -311,8 +298,7 @@ Status: FAILED ❌
 
 Check the console output for more details: ${env.BUILD_URL}
 """
+      }
     }
   }
-}
-
 }
