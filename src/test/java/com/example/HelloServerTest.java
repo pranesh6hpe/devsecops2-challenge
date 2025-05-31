@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Test;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class HelloServerTest {
@@ -16,7 +15,9 @@ class HelloServerTest {
         var servlet = new HelloServer.IndexServlet();
         var resp = mock(HttpServletResponse.class);
         when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
         servlet.doGet(null, resp);
+
         verify(resp).setContentType("text/html");
     }
 
@@ -25,7 +26,9 @@ class HelloServerTest {
         var servlet = new HelloServer.WeatherServlet();
         var req  = mock(HttpServletRequest.class);
         var resp = mock(HttpServletResponse.class);
+
         servlet.doGet(req, resp);
+
         verify(resp).sendError(eq(400), anyString());
     }
 }
