@@ -80,18 +80,34 @@ public class HelloServer {
   <meta charset="UTF-8">
   <title>Weather Now</title>
   <style>
+    :root {
+      --bg-start: #1e3c72;
+      --bg-end: #2a5298;
+      --glass: rgba(255, 255, 255, 0.1);
+      --text-light: #ffffff;
+      --button: #00b4d8;
+      --button-hover: #0077b6;
+      --input-bg: rgba(255, 255, 255, 0.2);
+      --shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
     * {
-      box-sizing: border-box;
       margin: 0;
       padding: 0;
+      box-sizing: border-box;
     }
 
     html, body {
       height: 100%;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: linear-gradient(135deg, #1e3c72, #2a5298);
-      animation: gradient 10s ease infinite;
+      background: linear-gradient(135deg, var(--bg-start), var(--bg-end));
       background-size: 400% 400%;
+      animation: gradient 12s ease infinite;
+      color: var(--text-light);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 1rem;
     }
 
     @keyframes gradient {
@@ -100,40 +116,39 @@ public class HelloServer {
       100% { background-position: 0% 50%; }
     }
 
-    body {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 1rem;
-    }
-
     .card {
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--glass);
       border-radius: 1.5rem;
       padding: 2rem 2.5rem;
-      max-width: 350px;
+      max-width: 380px;
       width: 100%;
       text-align: center;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      box-shadow: var(--shadow);
       backdrop-filter: blur(15px);
-      color: #fff;
+      -webkit-backdrop-filter: blur(15px);
+      animation: fadeIn 1s ease-in-out;
     }
 
-    .card h2 {
-      font-size: 2rem;
-      margin-bottom: 1.2rem;
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    h2 {
+      font-size: 2.2rem;
+      margin-bottom: 1.5rem;
     }
 
     .city-input {
       width: 100%;
-      padding: 0.7rem 1rem;
+      padding: 0.8rem 1rem;
       font-size: 1rem;
       border: none;
-      border-radius: 0.7rem;
-      margin-bottom: 1rem;
-      outline: none;
-      background: rgba(255, 255, 255, 0.2);
+      border-radius: 0.9rem;
+      background: var(--input-bg);
       color: #fff;
+      margin-bottom: 1.2rem;
+      outline: none;
       transition: background 0.3s ease;
     }
 
@@ -146,29 +161,36 @@ public class HelloServer {
     }
 
     button {
-      background-color: #00b4d8;
+      background: var(--button);
       border: none;
-      border-radius: 0.7rem;
-      padding: 0.7rem 1.5rem;
+      border-radius: 0.9rem;
+      padding: 0.75rem 1.5rem;
       font-size: 1rem;
+      font-weight: 500;
       color: #fff;
       cursor: pointer;
-      transition: background-color 0.3s ease;
+      transition: background 0.3s ease;
     }
 
     button:hover {
-      background-color: #0077b6;
+      background: var(--button-hover);
     }
 
     .result {
-      margin-top: 1.5rem;
-      font-size: 1.1rem;
+      margin-top: 2rem;
+      font-size: 1.05rem;
+      line-height: 1.6;
+    }
+
+    .result p {
+      margin: 0.4rem 0;
     }
 
     .temp {
-      font-size: 2.8rem;
-      font-weight: 700;
-      margin: 0.5rem 0;
+      font-size: 3rem;
+      font-weight: bold;
+      color: #ffd700;
+      margin: 1rem 0 0.5rem;
     }
 
     footer {
@@ -186,6 +208,20 @@ public class HelloServer {
 
     footer a:hover {
       text-decoration: underline;
+    }
+
+    @media (max-width: 420px) {
+      .card {
+        padding: 1.5rem;
+      }
+
+      .temp {
+        font-size: 2.5rem;
+      }
+
+      h2 {
+        font-size: 1.8rem;
+      }
     }
   </style>
 </head>
@@ -223,6 +259,7 @@ public class HelloServer {
   </script>
 </body>
 </html>
+
 """);
 
 
