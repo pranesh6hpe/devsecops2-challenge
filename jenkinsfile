@@ -199,7 +199,7 @@ JSON Findings (truncated):
 
 # 4) Call the Gemini Developer API via the new Client
 client = genai.Client()                               # uses GOOGLE_API_KEY
-model_name = "gemini-2.0-pro"                         # v2 Pro text-only model
+model_name = "gemini-1.5-pro-latest"                         # v2 Pro text-only model
 
 response = client.models.generate_content(
     model=model_name,
