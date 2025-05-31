@@ -206,10 +206,9 @@ JSON Findings (truncated):
 {payload_json}
 ```\"\"\"
 
-response = genai.generate(
-    model=model,
-    prompt=prompt,
-    temperature=0.2
+response = model.generate_content(
+    prompt,
+    generation_config={"temperature": 0.2}
 )
 
 print('\\n===== Gemini vulnerability triage =====\\n')
