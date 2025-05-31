@@ -24,26 +24,26 @@ pipeline {
       }
     }
 
-        /* ───────────────────  AI Unit-Tests (EvoSuite)  ─────────────────── */
+          /* ───────────────────  AI Unit-Tests (EvoSuite) ─────────────────── */
     stage('AI Unit-Tests (EvoSuite)') {
       steps {
-        // 1) Compile main classes without running tests
+        // 1) Compile main classes without running existing tests
         sh 'mvn test-compile -q'
 
-        // 2) Generate EvoSuite tests directly into src/test/java
-        //    Uses EvoSuite Maven plugin v1.2.0 from Maven Central
+        // 2) Generate EvoSuite tests into src/test/java using plugin v1.0.7
         sh '''
-          mvn org.evosuite:evosuite-maven-plugin:1.2.0:generate \
+          mvn org.evosuite:evosuite-maven-plugin:1.0.7:generate \
               -DprojectCP=target/classes \
               -Devosuite.outputDirectory=src/test/java \
               -DgenerateTestsBundle=true \
               -Dsearch_budget=60
         '''
 
-        // 3) Run all unit tests (including those just generated)
+        // 3) Run all unit tests (including newly generated ones)
         sh 'mvn test -q'
       }
     }
+
 
 
     /* ──────────────────────────  SONAR  ────────────────────────── */
