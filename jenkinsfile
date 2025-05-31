@@ -132,49 +132,82 @@ pipeline {
     }
 
 
-          stage('AI Vulnerability Triage (Gemini)') {
-      steps {
-        withCredentials([string(credentialsId: 'gemini-key', variable: 'GEMINI_API_KEY')]) {
-          sh '''
-            export GOOGLE_API_KEY="$GEMINI_API_KEY"
+         stage('AI Vulnerability Triage (Gemini)') {
+  steps {
+    withCredentials([string(credentialsId: 'gemini-key', variable: 'GEMINI_API_KEY')]) {
+      sh '''
+        export GOOGLE_API_KEY="$GEMINI_API_KEY"
 
-            python3 - <<'PY'
-import os, sys, subprocess, json, yaml, pathlib, textwrap
+        python3 - << 'PYTHON'
+import os
+import sys
+import subprocess
+import json
+import yaml
+import pathlib
+import textwrap
 
-# ── 1. Install SDK ───────────────────────────────────────────────────
+# 1) Install / upgrade Google GenAI SDK
 subprocess.run(
     [sys.executable, "-m", "pip", "install", "--quiet", "--user", "google-genai>=0.8.0"],
-    check=True)
+    check=True
+)
+
 from google import genai
 from google.genai import types
 
-# ── 2. Load Trivy report ─────────────────────────────────────────────
+# 2) Locate and read combined-trivy-report.yaml
 fp = pathlib.Path("combined-trivy-report.yaml")
 if not fp.exists():
-    print("❌  combined-trivy-report.yaml not found"); sys.exit(1)
+    print("❌ combined-trivy-report.yaml not found"); sys.exit(1)
 
+# Load YAML; handle multi-doc
 docs = list(yaml.safe_load_all(fp.read_text()))
-reports = [d for d in docs if isinstance(d, dict) and d.get("kind")=="VulnerabilityReport"]
-reports += [it for d in docs if isinstance(d, dict) and "items" in d
-            for it in d["items"]
-            if isinstance(it, dict) and it.get("kind")=="VulnerabilityReport"]
 
-vulns = [v for r in reports for v in r.get("report", {}).get("vulnerabilities", [])]
-crit  = [v for v in vulns if str(v.get("severity")).upper() in ("HIGH","CRITICAL")]
+# Extract all VulnerabilityReport items
+reports = [
+    d for d in docs
+    if isinstance(d, dict) and d.get("kind") == "VulnerabilityReport"
+]
+reports += [
+    item for d in docs if isinstance(d, dict) and "items" in d
+    for item in d["items"]
+    if isinstance(item, dict) and item.get("kind") == "VulnerabilityReport"
+]
 
-print(f"🔎 Reports : {len(reports)}  |  Vulns : {len(vulns)}  |  HIGH/CRIT : {len(crit)}")
+# 3) Collect all vulnerabilities
+vulns = []
+for rpt in reports:
+    vulns.extend(rpt.get("report", {}).get("vulnerabilities", []))
+
+# Filter HIGH/CRITICAL
+crit = [
+    v for v in vulns
+    if str(v.get("severity")).upper() in ("HIGH", "CRITICAL")
+]
+
+print(f"🔎 VulnerabilityReports : {len(reports)}")
+print(f"🔎 Vulnerabilities      : {len(vulns)}")
+print(f"🔎 HIGH/CRITICAL        : {len(crit)}")
+
 if not crit:
-    print("👍  No HIGH/CRITICAL findings — skipping Gemini triage."); sys.exit(0)
+    print("👍  No HIGH/CRITICAL findings — skipping Gemini triage.")
+    sys.exit(0)
 
-# ── 3. Build prompt (first 200 JSON lines only) ──────────────────────
-system_prompt = textwrap.dedent(\"\"\"\
-You are a cloud-security expert. Using the HIGH/CRITICAL Trivy findings:
+# 4) Build a prompt using only the first 200 lines of JSON
+full_json = json.dumps(crit, indent=2)
+json_lines = full_json.splitlines()[:200]  # keep only first 200 lines
+payload_json = "\\n".join(json_lines)
 
-1. List the 10 most urgent CVEs (one-line reason each).
-2. Suggest 3 remediation actions that remove the most findings.
-3. Group duplicates by package+version where useful.
+system_prompt = textwrap.dedent("""
+You are a cloud-security expert. Given the JSON array of HIGH/CRITICAL Trivy
+findings below:
 
-Return **strict markdown**:
+1. List the 10 most urgent CVEs with a one-line justification each.
+2. Suggest the 3 remediation actions that mitigate the largest number of findings.
+3. Group duplicates (same package + version) when useful.
+
+Return strict markdown:
 
 ### Urgent CVEs
 | Rank | CVE | Reason |
@@ -182,39 +215,39 @@ Return **strict markdown**:
 1. ...
 2. ...
 3. ...
-\"\"\")
+""")
 
-json_block   = json.dumps(crit, indent=2).splitlines()[:200]   # ≤ 200 lines
-payload_json = "\n".join(json_block)
-
-prompt = "\n".join([
+# Combine system prompt + truncated JSON block
+prompt_lines = [
     system_prompt,
     "JSON Findings (first 200 lines):",
     "```json",
     payload_json,
     "```"
-])
+]
+prompt = "\\n".join(prompt_lines)
 
-# ── 4. Call Gemini Developer API ─────────────────────────────────────
-client     = genai.Client()                     # uses GOOGLE_API_KEY
-model_name = "gemini-1.5-pro-latest"            # current Pro text-model
+# 5) Call Gemini Developer API using the new client
+client = genai.Client()  # Uses GOOGLE_API_KEY from env
+model_name = "gemini-1.5-pro-latest"  # Current text-only Pro model
 
 response = client.models.generate_content(
     model=model_name,
     contents=prompt,
     config=types.GenerateContentConfig(
         temperature=0.2,
-        max_output_tokens=1024,
+        max_output_tokens=1024
     )
 )
 
 print("\\n===== Gemini vulnerability triage =====\\n")
 print(response.text)
-PY
-          '''
-        }
-      }
+PYTHON
+      '''
     }
+  }
+}
+
 
 
 
