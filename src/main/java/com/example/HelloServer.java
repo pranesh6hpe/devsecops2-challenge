@@ -73,29 +73,120 @@ public class HelloServer {
             resp.setContentType("text/html");
             try (var writer = resp.getWriter()) {
 
-                writer.write("""
-<!doctype html>
+               writer.write("""
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
   <title>Weather Now</title>
   <style>
-    :root { font-family: system-ui, sans-serif; }
-    body  { margin:0; padding:0; height:100vh;
-            display:flex; align-items:center; justify-content:center;
-            background: linear-gradient(135deg,#4facfe 0%,#00f2fe 100%); }
-    .card { background:#fff; padding:2rem 3rem; border-radius:1.2rem;
-            box-shadow:0 8px 24px rgba(0,0,0,.15); width:320px; text-align:center; }
-    .city-input { width:100%; padding:.6rem 1rem; font-size:1rem;
-                  border:1px solid #ccc; border-radius:.5rem; }
-    button { margin-top:1rem; padding:.6rem 1.4rem; font-size:1rem;
-             border:none; border-radius:.5rem; background:#4facfe; color:#fff;
-             cursor:pointer; transition:background .2s; }
-    button:hover { background:#3a8de0; }
-    .result { margin-top:1.4rem; font-size:1.1rem; }
-    .temp   { font-size:2.6rem; font-weight:700; }
-    footer  { position:fixed; bottom:.5rem; right:.7rem; font-size:.8rem; color:#eee; }
-    a { color:#fff; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #1e3c72, #2a5298);
+      animation: gradient 10s ease infinite;
+      background-size: 400% 400%;
+    }
+
+    @keyframes gradient {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 1rem;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 1.5rem;
+      padding: 2rem 2.5rem;
+      max-width: 350px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(15px);
+      color: #fff;
+    }
+
+    .card h2 {
+      font-size: 2rem;
+      margin-bottom: 1.2rem;
+    }
+
+    .city-input {
+      width: 100%;
+      padding: 0.7rem 1rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 0.7rem;
+      margin-bottom: 1rem;
+      outline: none;
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+      transition: background 0.3s ease;
+    }
+
+    .city-input::placeholder {
+      color: #ddd;
+    }
+
+    .city-input:focus {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    button {
+      background-color: #00b4d8;
+      border: none;
+      border-radius: 0.7rem;
+      padding: 0.7rem 1.5rem;
+      font-size: 1rem;
+      color: #fff;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #0077b6;
+    }
+
+    .result {
+      margin-top: 1.5rem;
+      font-size: 1.1rem;
+    }
+
+    .temp {
+      font-size: 2.8rem;
+      font-weight: 700;
+      margin: 0.5rem 0;
+    }
+
+    footer {
+      position: fixed;
+      bottom: 0.8rem;
+      right: 1rem;
+      font-size: 0.8rem;
+      color: #ccc;
+    }
+
+    footer a {
+      color: #ffffffaa;
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
@@ -108,28 +199,32 @@ public class HelloServer {
 
   <footer><a href="/metrics" target="_blank">Prometheus metrics</a></footer>
 
-<script>
-async function getWeather() {
-  const city = document.getElementById('city').value.trim();
-  if (!city) return;
-  const out = document.getElementById('output');
-  out.textContent = 'Fetching…';
-  try {
-    const res = await fetch('/weather?city=' + encodeURIComponent(city));
-    if (!res.ok) throw new Error(res.status);
-    const j = await res.json();
-    out.innerHTML = `
-      <div>${j.city} — ${j.date}</div>
-      <div class="temp">${j.temperatureC.toFixed(1)} °C</div>
-      <div>${j.description}</div>`;
-  } catch (e) {
-    out.textContent = 'Error: ' + e;
-  }
-}
-</script>
+  <script>
+    async function getWeather() {
+      const city = document.getElementById('city').value.trim();
+      const out = document.getElementById('output');
+      if (!city) {
+        out.textContent = 'Please enter a city.';
+        return;
+      }
+      out.textContent = 'Fetching…';
+      try {
+        const res = await fetch('/weather?city=' + encodeURIComponent(city));
+        if (!res.ok) throw new Error(res.status);
+        const j = await res.json();
+        out.innerHTML = `
+          <div>${j.city} — ${j.date}</div>
+          <div class="temp">${j.temperatureC.toFixed(1)} °C</div>
+          <div>${j.description}</div>`;
+      } catch (e) {
+        out.textContent = 'Error: ' + e.message;
+      }
+    }
+  </script>
 </body>
 </html>
 """);
+
 
             } catch (IOException ioe) {
                 LOG.error("Unable to render index page", ioe);
