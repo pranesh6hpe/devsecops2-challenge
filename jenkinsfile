@@ -134,32 +134,48 @@ stage('AI Vulnerability Triage (Gemini)') {
         python3 - <<'PY'
 import os, sys, subprocess, json, yaml, pathlib, textwrap
 
-# 1) Ensure SDK present
-subprocess.run([sys.executable, "-m", "pip", "install",
-                "--quiet", "--user", "google-generativeai>=0.8.5"], check=True)
+# ── 1. Ensure Gemini SDK is installed ─────────────────────────────────────────
+subprocess.run(
+    [sys.executable, "-m", "pip", "install", "--quiet", "--user",
+     "google-generativeai>=0.8.5"],
+    check=True)
 import google.generativeai as genai
 
-# 2) Preview file
+# ── 2. Locate and preview combined-trivy-report.yaml ─────────────────────────
 fp = pathlib.Path("combined-trivy-report.yaml")
 if not fp.exists():
     print("❌  combined-trivy-report.yaml NOT found"); sys.exit(1)
 
 print(f"📄 File path : {fp.resolve()}")
 print(f"📄 Size      : {fp.stat().st_size} bytes")
-for i, l in enumerate(fp.open()):
-    if i >= 25: break
-    sys.stdout.write(l)
+print("📄 First 25 lines:")
+print("-"*72)
+for i, line in enumerate(fp.open()):
+    if i >= 25:
+        break
+    sys.stdout.write(line)
 print("-"*72)
 
-# 3) Parse VulnerabilityReports
-docs = list(yaml.safe_load_all(fp.read_text()))
-reports = [ d for d in docs if isinstance(d, dict) and d.get('kind')=='VulnerabilityReport' ]
-reports += [ it for doc in docs if isinstance(doc, dict) and 'items' in doc
-             for it in doc['items']
-             if isinstance(it, dict) and it.get('kind')=='VulnerabilityReport' ]
+# ── 3. Parse VulnerabilityReports ─────────────────────────────────────────────
+docs    = list(yaml.safe_load_all(fp.read_text()))
+reports = [
+    d for d in docs
+    if isinstance(d, dict) and d.get("kind") == "VulnerabilityReport"
+] + [
+    it for doc in docs 
+    if isinstance(doc, dict) and "items" in doc
+    for it in doc["items"]
+    if isinstance(it, dict) and it.get("kind") == "VulnerabilityReport"
+]
 
-vulns   = [ v for r in reports for v in r.get('report', {}).get('vulnerabilities', []) ]
-crit    = [ v for v in vulns if str(v.get('severity')).upper() in ('HIGH','CRITICAL') ]
+vulns = []
+for rpt in reports:
+    vulns.extend(rpt.get("report", {}).get("vulnerabilities", []))
+
+crit = [
+    v for v in vulns
+    if str(v.get("severity")).upper() in ("HIGH", "CRITICAL")
+]
 
 print(f"🔎 VulnerabilityReports : {len(reports)}")
 print(f"🔎 Vulnerabilities      : {len(vulns)}")
@@ -169,11 +185,11 @@ if not crit:
     print("👍  No HIGH/CRITICAL findings — skipping Gemini triage.")
     sys.exit(0)
 
-# 4) Call Gemini
-genai.configure(api_key=os.environ['GEMINI_API_KEY'])
-model = genai.GenerativeModel('gemini-pro')
+# ── 4. Build prompt & call Gemini ─────────────────────────────────────────────
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-pro")
 
-system = textwrap.dedent(\"\"\"\
+system_prompt = textwrap.dedent("""\
 You are a cloud-security expert. Given the JSON array of HIGH/CRITICAL Trivy
 findings below, do the following:
 
@@ -190,22 +206,32 @@ Return **strict markdown**:
 1. ...
 2. ...
 3. ...
-\"\"\")
+""")
 
-payload = json.dumps(crit)[:12000]      # keep request compact
+payload_json = json.dumps(crit)[:12000]  # keep under ~12 KB
 
-prompt  = f"{system}\n\nJSON Findings (truncated):\n```json\n{payload}\n```"
+# Build a single f-string with triple quotes to avoid unterminated literal errors
+prompt = f"""{system_prompt}
 
-response = model.generate_content(prompt,
-                                  generation_config={"temperature":0.2})
+JSON Findings (truncated):
+```json
+{payload_json}
+```"""
 
-print("\\n===== Gemini vulnerability triage =====\\n")
+response = genai.generate(
+    model=model,
+    prompt=prompt,
+    temperature=0.2
+)
+
+print("\n===== Gemini vulnerability triage =====\n")
 print(response.text)
 PY
       '''
     }
   }
 }
+
 
 
 
