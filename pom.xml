@@ -16,6 +16,8 @@
     <jetty.version>11.0.15</jetty.version>
     <jakarta.servlet.version>5.0.0</jakarta.servlet.version>
     <surefire.version>3.0.0-M7</surefire.version>
+    <slf4j.version>2.0.13</slf4j.version>
+    <logback.version>1.5.6</logback.version>
   </properties>
 
   <dependencies>
@@ -69,6 +71,18 @@
       <version>2.17.0</version>
     </dependency>
 
+    <!-- ─── Logging ────────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>${logback.version}</version>
+    </dependency>
+
     <!-- ─── Test deps ──────────────────────────────────────────────── -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -112,7 +126,7 @@
         </configuration>
       </plugin>
 
-      <!-- Shade to build an executable fat-JAR -->
+      <!-- Shade → executable fat-JAR -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
@@ -128,6 +142,23 @@
                 </transformer>
               </transformers>
             </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- JaCoCo → coverage for Sonar -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.11</version>
+        <executions>
+          <execution>
+            <goals><goal>prepare-agent</goal></goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals><goal>report</goal></goals>
           </execution>
         </executions>
       </plugin>
