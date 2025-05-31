@@ -29,7 +29,7 @@ pipeline {
             sh '''
               mvn sonar:sonar \
                 -Dsonar.projectKey=${APP_NAME} \
-                -Dsonar.login=${SONAR_TOKEN}
+                -Dsonar.token=${SONAR_TOKEN}
             '''
           }
         }
