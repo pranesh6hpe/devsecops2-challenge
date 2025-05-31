@@ -10,24 +10,28 @@
   <packaging>jar</packaging>
   <name>DevSecOps2 Challenge</name>
 
+  <!-- ─── Versions & properties ─────────────────────────────────────── -->
   <properties>
-    <!-- Java compiler level -->
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-
-    <!-- Versions for dependencies -->
     <jetty.version>11.0.15</jetty.version>
     <jakarta.servlet.version>5.0.0</jakarta.servlet.version>
-    <surefire.version>3.0.0-M7</surefire.version>
+    <micrometer.version>1.11.0</micrometer.version>
+    <spring.boot.actuator.version>3.3.0</spring.boot.actuator.version>
+    <jackson.version>2.17.0</jackson.version>
     <slf4j.version>2.0.13</slf4j.version>
     <logback.version>1.5.6</logback.version>
-
-    <!-- Jacoco report path for SonarQube -->
+    <surefire.version>3.0.0-M7</surefire.version>
+    <jacoco.version>0.8.11</jacoco.version>
+    <shade.version>3.4.1</shade.version>
+    <evosuite.version>1.0.6</evosuite.version>
+    <!-- Sonar will read this JaCoCo XML for coverage -->
     <sonar.coverage.jacoco.xmlReportPaths>target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
   </properties>
 
+  <!-- ─── Dependencies ──────────────────────────────────────────────── -->
   <dependencies>
-    <!-- ─── Web stack ──────────────────────────────────────────────── -->
+    <!-- Web stack -->
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-server</artifactId>
@@ -38,7 +42,7 @@
       <artifactId>jetty-servlet</artifactId>
       <version>${jetty.version}</version>
     </dependency>
-    <!-- Provided at runtime by Jetty -->
+    <!-- Provided servlet API -->
     <dependency>
       <groupId>jakarta.servlet</groupId>
       <artifactId>jakarta.servlet-api</artifactId>
@@ -46,33 +50,31 @@
       <scope>provided</scope>
     </dependency>
 
-    <!-- ─── Metrics ────────────────────────────────────────────────── -->
+    <!-- Metrics & Spring Actuator -->
     <dependency>
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
-      <version>1.11.0</version>
+      <version>${micrometer.version}</version>
     </dependency>
-    <!-- Optional: actuator endpoints -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
-      <version>3.3.0</version>
+      <version>${spring.boot.actuator.version}</version>
     </dependency>
 
-    <!-- ─── JSON (Jackson) ─────────────────────────────────────────── -->
+    <!-- JSON (Jackson) -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>2.17.0</version>
+      <version>${jackson.version}</version>
     </dependency>
-    <!-- Java-time module so LocalDate serializes cleanly -->
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>
-      <version>2.17.0</version>
+      <version>${jackson.version}</version>
     </dependency>
 
-    <!-- ─── Logging ────────────────────────────────────────────────── -->
+    <!-- Logging -->
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
@@ -84,15 +86,15 @@
       <version>${logback.version}</version>
     </dependency>
 
-    <!-- ─── EvoSuite runtime (for generated tests) ──────────────────── -->
+    <!-- EvoSuite runtime for generated tests -->
     <dependency>
       <groupId>org.evosuite</groupId>
       <artifactId>evosuite-standalone-runtime</artifactId>
-      <version>1.0.6</version>
+      <version>${evosuite.version}</version>
       <scope>test</scope>
     </dependency>
 
-    <!-- ─── Test deps ──────────────────────────────────────────────── -->
+    <!-- Unit‑test dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -107,9 +109,26 @@
     </dependency>
   </dependencies>
 
+  <!-- ─── Build / Plugins ───────────────────────────────────────────── -->
   <build>
+    <!-- 0. Toolchains: declare once so plugins can request JDK‑8 -->
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-toolchains-plugin</artifactId>
+          <version>3.1.1</version>
+          <executions>
+            <execution>
+              <goals><goal>toolchain</goal></goals>
+            </execution>
+          </executions>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
     <plugins>
-      <!-- ─── 1. Java 21 compiler ─────────────────────────────────── -->
+      <!-- 1) Java 21 compilation for production code -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -119,7 +138,7 @@
         </configuration>
       </plugin>
 
-      <!-- ─── 2. Surefire for JUnit 5 ─────────────────────────────── -->
+      <!-- 2) Surefire for JUnit 5 -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -132,11 +151,11 @@
         </configuration>
       </plugin>
 
-      <!-- ─── 3. Shade → executable fat-JAR ────────────────────────── -->
+      <!-- 3) Shade: build executable fat‑JAR -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>3.4.1</version>
+        <version>${shade.version}</version>
         <executions>
           <execution>
             <phase>package</phase>
@@ -152,52 +171,40 @@
         </executions>
       </plugin>
 
-      <!-- ─── 4. JaCoCo → coverage for SonarQube ───────────────────── -->
+      <!-- 4) JaCoCo for test coverage → used by SonarQube -->
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
-        <version>0.8.11</version>
+        <version>${jacoco.version}</version>
         <executions>
           <execution>
-            <goals>
-              <goal>prepare-agent</goal>
-            </goals>
+            <goals><goal>prepare-agent</goal></goals>
           </execution>
           <execution>
             <id>report</id>
             <phase>test</phase>
-            <goals>
-              <goal>report</goal>
-            </goals>
+            <goals><goal>report</goal></goals>
           </execution>
         </executions>
       </plugin>
 
-      <!-- ─── 5. EvoSuite Maven Plugin ──────────────────────────────── -->
-      <!-- Binds "generate" to process-test-classes; writes tests to src/test/java -->
+      <!-- 5) EvoSuite: generate AI unit‑tests under a JDK 8 toolchain -->
       <plugin>
         <groupId>org.evosuite.plugins</groupId>
         <artifactId>evosuite-maven-plugin</artifactId>
-        <version>1.0.6</version>
-        <executions>
-          <execution>
-            <goals>
-              <goal>generate</goal>
-            </goals>
-            <!-- automatically run during 'mvn test' -->
-            <phase>process-test-classes</phase>
-          </execution>
-        </executions>
+        <version>${evosuite.version}</version>
         <configuration>
-          <!-- Output directory for generated tests -->
+          <toolchainsJdk>evosuite-jdk</toolchainsJdk>
           <outputDirectory>${project.basedir}/src/test/java</outputDirectory>
-          <!-- Include any helper bundle classes if needed -->
-          <generateTestsBundle>true</generateTestsBundle>
-          <!-- Time (in seconds) spent per class generating tests -->
           <searchBudget>60</searchBudget>
         </configuration>
+        <executions>
+          <execution>
+            <phase>process-test-classes</phase>
+            <goals><goal>generate</goal></goals>
+          </execution>
+        </executions>
       </plugin>
-      <!-- ──────────────────────────────────────────────────────────────── -->
     </plugins>
   </build>
 </project>
