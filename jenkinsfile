@@ -8,10 +8,12 @@ pipeline {
   }
 
   stages {
+
+    /* ───────────────────────  SOURCE + BUILD  ─────────────────────── */
     stage('Checkout') {
       steps {
-        git url:           'https://github.com/pranesh6hpe/devsecops2-challenge.git',
-            branch:        'main',
+        git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
+            branch: 'main',
             credentialsId: 'git-https'
       }
     }
@@ -22,6 +24,7 @@ pipeline {
       }
     }
 
+    /* ─────────────────────────────  SONAR  ─────────────────────────── */
     stage('SonarQube Analysis') {
       steps {
         withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
@@ -44,20 +47,16 @@ pipeline {
       }
     }
 
+    /* ───────────────────────  BUILD & PUSH IMAGE  ──────────────────── */
     stage('Build & Push Image') {
       steps {
         script {
-          env.IMAGE_TAG = sh(
-            returnStdout: true,
-            script: 'git rev-parse --short HEAD'
-          ).trim()
-          env.IMAGE = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
+          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          env.IMAGE     = "${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}"
 
-          withCredentials([usernamePassword(
-            credentialsId: 'nexus-cred',
-            usernameVariable: 'NEXUS_USER',
-            passwordVariable: 'NEXUS_PW'
-          )]) {
+          withCredentials([usernamePassword(credentialsId: 'nexus-cred',
+                                            usernameVariable: 'NEXUS_USER',
+                                            passwordVariable: 'NEXUS_PW')]) {
             sh '''
               echo "🛠  Building $IMAGE"
               docker build --security-opt seccomp=unconfined -t "$IMAGE" .
@@ -74,17 +73,15 @@ pipeline {
       }
     }
 
+    /* ────────────────────────  TRIVY IMAGE SCAN  ───────────────────── */
     stage('Trivy Image Scan') {
       steps {
         script {
-          withCredentials([usernamePassword(
-            credentialsId: 'nexus-cred',
-            usernameVariable: 'NEXUS_USER',
-            passwordVariable: 'NEXUS_PW'
-          )]) {
+          withCredentials([usernamePassword(credentialsId: 'nexus-cred',
+                                            usernameVariable: 'NEXUS_USER',
+                                            passwordVariable: 'NEXUS_PW')]) {
             sh '''
               IMAGE=${IMAGE_ROOT}/${APP_NAME}:${IMAGE_TAG}
-
               echo "🔎  Trivy scanning $IMAGE"
               trivy image \
                 --username  "$NEXUS_USER" \
@@ -100,121 +97,86 @@ pipeline {
       }
     }
 
+    /* ────────────────  COLLECT TRIVY OPERATOR REPORTS  ─────────────── */
     stage('Collect Trivy Reports') {
       steps {
         sh '''
-          # Operator-level reports
-          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml \
-            > vulnerability-reports.yaml
-          kubectl -n trivy-system get configauditreports.aquasecurity.github.io -o yaml \
-            > configaudit-reports.yaml
+          kubectl -n trivy-system get vulnerabilityreports.aquasecurity.github.io -o yaml > vulnerability-reports.yaml
+          kubectl -n trivy-system get configauditreports.aquasecurity.github.io   -o yaml > configaudit-reports.yaml
 
-          # (Optional) namespace-scoped reports in "dev"
-          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml \
-            >> vulnerability-reports.yaml || true
-          kubectl -n dev get configauditreports.aquasecurity.github.io -o yaml \
-            >> configaudit-reports.yaml    || true
+          kubectl -n dev get vulnerabilityreports.aquasecurity.github.io -o yaml   >> vulnerability-reports.yaml || true
+          kubectl -n dev get configauditreports.aquasecurity.github.io   -o yaml   >> configaudit-reports.yaml    || true
 
-          # Combine into a single file
           echo '---' > combined-trivy-report.yaml
-          cat vulnerability-reports.yaml   >> combined-trivy-report.yaml
-          echo '---'                      >> combined-trivy-report.yaml
-          cat configaudit-reports.yaml    >> combined-trivy-report.yaml
+          cat vulnerability-reports.yaml >> combined-trivy-report.yaml
+          echo '---'                     >> combined-trivy-report.yaml
+          cat configaudit-reports.yaml   >> combined-trivy-report.yaml
         '''
         archiveArtifacts artifacts: '*.yaml', fingerprint: true
       }
     }
 
-stage('AI Vulnerability Triage (Gemini)') {
-  steps {
-    withCredentials([string(credentialsId: 'gemini-key',
-                            variable: 'GEMINI_API_KEY')]) {
+    /* ───────────────────  AI RELEASE NOTES (GROQ)  ─────────────────── */
+    stage('AI Release Notes (Groq)') {
+      when { expression { currentBuild.currentResult == 'SUCCESS' } }
+      steps {
+        withCredentials([string(credentialsId: 'groq-key', variable: 'GROQ_API_KEY')]) {
+          sh '''
+            set -e
+            # fetch last 200 commit lines
+            git --no-pager log -n 200 --pretty=format:"%h %<(70,trunc)%s" > commits.txt
 
-      sh '''
-        python3 - <<'PY'
-import os, sys, subprocess, json, yaml, pathlib, textwrap
+            python3 - <<'PY'
+import subprocess, sys, os, pathlib, textwrap
 
-# ── 1. Ensure SDK is present for the jenkins user ─────────────────────────────
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user",
-                "google-generativeai>=0.8.5"], check=True)
-import google.generativeai as genai
+# one-time SDK install (cached thereafter)
+subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user", "openai>=1.13.3"], check=True)
 
-# ── 2. Locate and preview the Trivy YAML ──────────────────────────────────────
-fp = pathlib.Path("combined-trivy-report.yaml")
-if not fp.exists():
-    print("❌ combined-trivy-report.yaml NOT found in workspace")
-    sys.exit(1)
+import openai
 
-print(f"📄 File path : {fp.resolve()}")
-print(f"📄 Size      : {fp.stat().st_size} bytes")
-print("📄 First 25 lines:")
-print("-"*72)
-for i, line in enumerate(fp.open()):
-    if i >= 25:
-        break
-    sys.stdout.write(line)
-print("-"*72)
-
-# ── 3. Parse YAML & filter HIGH / CRITICAL findings ───────────────────────────
-docs   = list(yaml.safe_load_all(fp.read_text()))
-items  = [it for d in docs if isinstance(d, dict) and 'items' in d for it in d['items']]
-crit   = [i for i in items if str(i.get('severity')).upper() in ('HIGH', 'CRITICAL')]
-
-print(f"🔎 Parsed items            : {len(items)}")
-print(f"🔎 HIGH/CRITICAL findings  : {len(crit)}")
-
-if not crit:
-    print("👍  No HIGH/CRITICAL findings — skipping Gemini triage.")
-    sys.exit(0)
-
-# ── 4. Build prompt and call Gemini ───────────────────────────────────────────
-genai.configure(api_key=os.environ['GEMINI_API_KEY'])
-model = genai.GenerativeModel('gemini-pro')
-
-payload = json.dumps(crit)[:12000]      # keep within token budget
-system  = textwrap.dedent(\"\"\"\
-You are a cloud security expert. You will receive a JSON array of Trivy HIGH/
-CRITICAL findings (Kubernetes Operator format). Each item has keys like cveID,
-severity, title, target, installedVersion, fixedVersion, references.
-
-Tasks:
-1. List the **10 most urgent CVEs** with one-line justifications.
-2. Suggest the **top 3 remediation actions** that eliminate or reduce the
-   largest number of findings.
-3. Group findings that share the same package+version.
-
-Output strict markdown:
-### Urgent CVEs
-| Rank | CVE | Reason |
-### Recommended Fixes
-1. ...
-2. ...
-3. ...
-\"\"\")
-
-response = model.generate_content(
-    [ {"role": "system", "content": system},
-      {"role": "user",   "content": payload} ],
-    generation_config = {"temperature": 0.2}
+client = openai.OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=os.environ["GROQ_API_KEY"]
 )
 
-print("\\n===== Gemini vulnerability triage =====\\n")
-print(response.text)
+commits_path = pathlib.Path("commits.txt")
+if not commits_path.exists() or not commits_path.read_text().strip():
+    print("No commits found – skipping AI release notes"); sys.exit(0)
+
+commits = commits_path.read_text()
+SYSTEM = textwrap.dedent(\"\"\"\
+You are an expert release-notes writer.
+Condense the commit list into a concise, user-friendly changelog (<200 words).
+Group similar items, drop merge/chore commits and start with “### Highlights”.
+\"\"\")
+USER = f"Git commits since last release:\\n```\\n{commits}\\n```"
+
+resp = client.chat.completions.create(
+    model="mixtral-8x7b-chat",
+    temperature=0.3,
+    messages=[
+        {"role": "system", "content": SYSTEM},
+        {"role": "user",   "content": USER}
+    ]
+)
+notes = resp.choices[0].message.content.strip()
+print("\\n===== AI-Generated Release Notes =====\\n")
+print(notes)
+pathlib.Path("release-notes.md").write_text(notes + "\\n")
 PY
-      '''
+          '''
+          archiveArtifacts artifacts: 'release-notes.md', fingerprint: true
+        }
+      }
     }
-  }
-}
 
-
-
+    /* ───────────────────────────  DEPLOY DEV  ───────────────────────── */
     stage('Deploy to DEV') {
       steps {
         sh '''
           echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to dev"
           helm upgrade --install "$APP_NAME" chart \
-            --namespace dev \
-            --create-namespace \
+            --namespace dev --create-namespace \
             --set image.repository=$IMAGE_ROOT/$APP_NAME \
             --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull \
@@ -224,10 +186,9 @@ PY
       }
     }
 
+    /* ────────────────  MANUAL APPROVAL & PROD DEPLOY  ──────────────── */
     stage('Approval to PROD') {
-      steps {
-        input message: "Deploy ${APP_NAME}:${IMAGE_TAG} to PROD?"
-      }
+      steps { input message: "Deploy ${APP_NAME}:${IMAGE_TAG} to PROD?" }
     }
 
     stage('Deploy to PROD') {
@@ -235,8 +196,7 @@ PY
         sh '''
           echo "🚀  Deploying $APP_NAME:${IMAGE_TAG} to prod"
           helm upgrade --install "$APP_NAME" chart \
-            --namespace prod \
-            --create-namespace \
+            --namespace prod --create-namespace \
             --set image.repository=$IMAGE_ROOT/$APP_NAME \
             --set image.tag=$IMAGE_TAG \
             --set imagePullSecrets[0].name=nexus-pull \
@@ -247,44 +207,26 @@ PY
     }
   }
 
+  /* ─────────────────────────  POST ACTIONS  ────────────────────────── */
   post {
-  always {
-    cleanWs()
-  }
+    always  { cleanWs() }
 
-  success {
-    script {
-      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-      mail to: gitEmail,
-           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS ✅",
-           body: """\
-Good news! The build was successful.
+    success {
+      script {
+        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+        mail to: gitEmail,
+             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} ✓",
+             body:    "Build succeeded — see details at ${env.BUILD_URL}"
+      }
+    }
 
-Project: ${env.JOB_NAME}
-Build Number: ${env.BUILD_NUMBER}
-Status: SUCCESS ✅
-
-Check it here: ${env.BUILD_URL}
-"""
+    failure {
+      script {
+        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
+        mail to: gitEmail,
+             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} ✗",
+             body:    "Build failed — investigate console output:\n${env.BUILD_URL}"
+      }
     }
   }
-
-  failure {
-    script {
-      def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-      mail to: gitEmail,
-           subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED ❌",
-           body: """\
-Unfortunately, the build has failed.
-
-Project: ${env.JOB_NAME}
-Build Number: ${env.BUILD_NUMBER}
-Status: FAILED ❌
-
-Check the console output for more details: ${env.BUILD_URL}
-"""
-    }
-  }
-}
-
 }
