@@ -134,56 +134,77 @@ stage('AI Vulnerability Triage (Gemini)') {
         python3 - <<'PY'
 import os, sys, subprocess, json, yaml, pathlib, textwrap
 
-# ── 1. Ensure SDK is present for the jenkins user ─────────────────────────────
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user",
-                "google-generativeai>=0.8.5"], check=True)
+# ── 1. Ensure Gemini SDK is installed for the Jenkins user ─────────────
+subprocess.run([sys.executable, "-m", "pip", "install",
+                "--quiet", "--user", "google-generativeai>=0.8.5"],
+               check=True)
 import google.generativeai as genai
 
-# ── 2. Locate and preview the Trivy YAML ──────────────────────────────────────
+# ── 2. Locate and preview combined-trivy-report.yaml ───────────────────
 fp = pathlib.Path("combined-trivy-report.yaml")
 if not fp.exists():
-    print("❌ combined-trivy-report.yaml NOT found in workspace")
-    sys.exit(1)
+    print("❌  combined-trivy-report.yaml NOT found in workspace"); sys.exit(1)
 
 print(f"📄 File path : {fp.resolve()}")
 print(f"📄 Size      : {fp.stat().st_size} bytes")
 print("📄 First 25 lines:")
 print("-"*72)
 for i, line in enumerate(fp.open()):
-    if i >= 200:
+    if i >= 25:
         break
     sys.stdout.write(line)
 print("-"*72)
 
-# ── 3. Parse YAML & filter HIGH / CRITICAL findings ───────────────────────────
-docs   = list(yaml.safe_load_all(fp.read_text()))
-items  = [it for d in docs if isinstance(d, dict) and 'items' in d for it in d['items']]
-crit   = [i for i in items if str(i.get('severity')).upper() in ('HIGH', 'CRITICAL')]
+# ── 3. Parse the YAML (could be multi-doc) ─────────────────────────────
+docs = list(yaml.safe_load_all(fp.read_text()))
 
-print(f"🔎 Parsed items            : {len(items)}")
-print(f"🔎 HIGH/CRITICAL findings  : {len(crit)}")
+reports = [
+    d for d in docs
+    if isinstance(d, dict) and d.get('kind') == 'VulnerabilityReport'
+] + [
+    item for doc in docs if isinstance(doc, dict) and 'items' in doc
+    for item in doc['items']
+    if isinstance(item, dict) and item.get('kind') == 'VulnerabilityReport'
+]
 
-if not crit:
+vulns = []
+for rpt in reports:
+    vulns.extend(
+        rpt.get('report', {}).get('vulnerabilities', [])
+    )
+
+critical_or_high = [
+    v for v in vulns
+    if str(v.get('severity')).upper() in ('HIGH', 'CRITICAL')
+]
+
+print(f"🔎 VulnerabilityReport objects  : {len(reports)}")
+print(f"🔎 Total vulnerabilities parsed : {len(vulns)}")
+print(f"🔎 HIGH/CRITICAL vulnerabilities: {len(critical_or_high)}")
+
+if not critical_or_high:
     print("👍  No HIGH/CRITICAL findings — skipping Gemini triage.")
     sys.exit(0)
 
-# ── 4. Build prompt and call Gemini ───────────────────────────────────────────
+# ── 4. Build prompt & call Gemini ──────────────────────────────────────
 genai.configure(api_key=os.environ['GEMINI_API_KEY'])
 model = genai.GenerativeModel('gemini-pro')
 
-payload = json.dumps(crit)[:12000]      # keep within token budget
+payload = json.dumps(critical_or_high)[:12000]   # keep token budget small
 system  = textwrap.dedent(\"\"\"\
-You are a cloud security expert. You will receive a JSON array of Trivy HIGH/
-CRITICAL findings (Kubernetes Operator format). Each item has keys like cveID,
-severity, title, target, installedVersion, fixedVersion, references.
+You are a cloud security expert. You will receive a JSON array of HIGH and
+CRITICAL vulnerabilities (flattened from Trivy Operator reports). Each object
+contains keys such as vulnerabilityID (CVE), severity, title, package, target,
+installedVersion, fixedVersion, and references.
 
 Tasks:
-1. List the **10 most urgent CVEs** with one-line justifications.
-2. Suggest the **top 3 remediation actions** that eliminate or reduce the
-   largest number of findings.
-3. Group findings that share the same package+version.
+1. Produce a table of the **10 most urgent CVEs** with a one-line reason.
+2. Recommend the **top 3 remediation actions** that would remove or mitigate
+   the largest number of findings (e.g., "Upgrade alpine to 3.19").
+3. Group identical package+version findings when relevant.
 
-Output strict markdown:
+Return strict markdown:
+
 ### Urgent CVEs
 | Rank | CVE | Reason |
 ### Recommended Fixes
@@ -192,14 +213,14 @@ Output strict markdown:
 3. ...
 \"\"\")
 
-response = model.generate_content(
+resp = model.generate_content(
     [ {"role": "system", "content": system},
       {"role": "user",   "content": payload} ],
     generation_config = {"temperature": 0.2}
 )
 
 print("\\n===== Gemini vulnerability triage =====\\n")
-print(response.text)
+print(resp.text)
 PY
       '''
     }
