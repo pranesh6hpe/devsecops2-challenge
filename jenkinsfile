@@ -132,37 +132,40 @@ pipeline {
     }
 
 
-        /* ──────────────────────────  AI TRIAGE WITH GEMINI  ────────────────────────── */
+       /* ──────────────────────────  AI TRIAGE WITH GEMINI  ────────────────────────── */
     stage('AI Vulnerability Triage (Gemini)') {
       steps {
         withCredentials([string(credentialsId: 'gemini-key', variable: 'GEMINI_API_KEY')]) {
           sh '''
-            # Export for the SDK (expects GOOGLE_API_KEY)
+            # Expose the key as expected by google-genai
             export GOOGLE_API_KEY="$GEMINI_API_KEY"
 
             python3 - <<'PY'
-import os, sys, subprocess, json, yaml, pathlib, textwrap
+import os, sys, subprocess, json, yaml, pathlib, textwrap, itertools
 
-# 1) Install/upgrade the **new** SDK
+# 1) Install / upgrade the new Google GenAI SDK
 subprocess.run(
     [sys.executable, "-m", "pip", "install", "--quiet", "--user", "google-genai>=0.8.0"],
     check=True)
 
 from google import genai
+from google.genai import types
 
-# 2) Read the combined report
+# 2) Read combined-trivy-report.yaml
 fp = pathlib.Path("combined-trivy-report.yaml")
 if not fp.exists():
-    print("❌  combined-trivy-report.yaml NOT found"); sys.exit(1)
+    print("❌  combined-trivy-report.yaml not found"); sys.exit(1)
 
 docs = list(yaml.safe_load_all(fp.read_text()))
-reports = [d for d in docs if isinstance(d, dict) and d.get("kind")=="VulnerabilityReport"]
-reports += [it for d in docs if isinstance(d, dict) and "items" in d
-            for it in d["items"]
-            if isinstance(it, dict) and it.get("kind")=="VulnerabilityReport"]
+reports = [d for d in docs if isinstance(d, dict) and d.get("kind") == "VulnerabilityReport"]
+reports += [
+    item for d in docs if isinstance(d, dict) and "items" in d
+    for item in d["items"]
+    if isinstance(item, dict) and item.get("kind") == "VulnerabilityReport"
+]
 
 vulns = [v for r in reports for v in r.get("report", {}).get("vulnerabilities", [])]
-crit  = [v for v in vulns if str(v.get("severity")).upper() in ("HIGH","CRITICAL")]
+crit  = [v for v in vulns if str(v.get("severity")).upper() in ("HIGH", "CRITICAL")]
 
 print(f"🔎 VulnerabilityReports : {len(reports)}")
 print(f"🔎 Vulnerabilities      : {len(vulns)}")
@@ -171,7 +174,11 @@ print(f"🔎 HIGH/CRITICAL        : {len(crit)}")
 if not crit:
     print("👍  No HIGH/CRITICAL findings — skipping Gemini triage."); sys.exit(0)
 
-# 3) Build prompt
+# 3) Build prompt — send **only the first 200 lines** of JSON
+full_json   = json.dumps(crit, indent=2)
+json_lines  = full_json.splitlines()[:200]          # keep ≤ 200 lines
+payload_json = "\n".join(json_lines)
+
 system_prompt = textwrap.dedent(\"\"\"\
 You are a cloud-security expert. Given the JSON array of HIGH/CRITICAL Trivy
 findings below:
@@ -189,25 +196,24 @@ Return **strict markdown**:
 2. ...
 3. ...
 \"\"\")
-payload_json = json.dumps(crit)[:12000]   # keep < 12 kB
+
 prompt = f\"\"\"{system_prompt}
 
-JSON Findings (truncated):
+JSON Findings (first 200 lines):
 ```json
 {payload_json}
 ```\"\"\"
 
-# 4) Call the Gemini Developer API via the new Client
-client = genai.Client()                               # uses GOOGLE_API_KEY
-model_name = "gemini-1.5-pro-latest"                         # v2 Pro text-only model
+# 4) Call Gemini (Developer API)
+client = genai.Client()                              # uses GOOGLE_API_KEY env-var
+model_name = "gemini-1.5-pro-latest"                 # current Pro model
 
 response = client.models.generate_content(
     model=model_name,
     contents=prompt,
-    # optional config:
-    config=genai.types.GenerateContentConfig(
+    config=types.GenerateContentConfig(
         temperature=0.2,
-        max_output_tokens=1024,
+        max_output_tokens=1024
     ),
 )
 
@@ -218,6 +224,7 @@ PY
         }
       }
     }
+
 
 
     /* ──────────────────────────  DEPLOY DEV  ────────────────────────── */
