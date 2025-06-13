@@ -127,17 +127,19 @@ pipeline {
       }
     }
 
-    /* ───────────────────  AI RELEASE NOTES (GROQ)  ─────────────────── */
- /* ──────────────────  AI RELEASE NOTES (Groq)  ────────────────── */
+/* ──────────────────  AI RELEASE NOTES (Groq)  ────────────────── */
 stage('AI Release Notes') {
-  when { expression { currentBuild.currentResult == 'SUCCESS' } }
+  when {
+    expression { currentBuild.currentResult == 'SUCCESS' }
+  }
 
   steps {
     withCredentials([
       string(credentialsId: 'groq-key', variable: 'GROQ_API_KEY')
-      // , string(credentialsId: 'gh-token',  variable: 'GH_TOKEN')  // optional
+      // , string(credentialsId: 'gh-token', variable: 'GH_TOKEN') // optional
     ]) {
-      // 1⃣ Collect only the delta since the last tag
+
+      /* 1⃣ Gather the Git delta since the last tag */
       sh label: 'Gather Git delta', script: '''
         set -e  # pipefail not available in /bin/sh on some agents
         last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -148,10 +150,10 @@ stage('AI Release Notes') {
         git shortlog -sne             "$range"  > authors.txt
       '''
 
-      // 2⃣ Ask Groq to build a richer changelog
+      /* 2⃣ Generate the AI‑driven release notes */
       sh label: 'Generate AI release notes', script: '''
         set -e
-        python3 - <<'PY'
+        cat > gen_notes.py <<'PY'
 import os, pathlib, textwrap, openai
 
 client = openai.OpenAI(
@@ -159,29 +161,21 @@ client = openai.OpenAI(
     api_key=os.environ["GROQ_API_KEY"]
 )
 
-def read(fp):
-    return pathlib.Path(fp).read_text().strip()
-
-commits = read("commits.txt")
-files   = read("files.txt")
-authors = read("authors.txt")
+read = lambda p: pathlib.Path(p).read_text().strip()
+commits, files, authors = map(read, ("commits.txt", "files.txt", "authors.txt"))
 
 SYSTEM = textwrap.dedent("""
 You are an expert technical writer generating developer‑focused release notes.
 Produce compact markdown containing:
 • A one‑line summary (#commits, #files, #contributors).
 • Categorised bullets (✨ Features, 🐛 Fixes, 🚀 Infra, 🔒 Security, 🧪 Tests).
-• A “Δ Files” block listing up to 10 most‑touched paths.
+• A “Δ Files” block listing up to 10 most‑touched paths.
 • Auto‑link issue/PR refs like #123 (GitHub style).
 • Warn about any 'BREAKING CHANGE' lines or major version bumps.
-Limit to ~250 words.
+Limit to ~250 words.
 """)
 
-USER = f"""
-Commits:\n```
-{commits}\n```\n\nFiles changed:\n```
-{files[:3000]}\n```\n\nContributors:\n```
-{authors}\n```"""
+USER = f"""Commits:\n```\n{commits}\n```\n\nFiles changed:\n```\n{files[:3000]}\n```\n\nContributors:\n```\n{authors}\n```"""
 
 response = client.chat.completions.create(
     model="llama3-70b-8192",
@@ -196,18 +190,19 @@ notes = response.choices[0].message.content.strip()
 pathlib.Path("release-notes.md").write_text(notes + "\n")
 print(notes)
 PY
+        python3 gen_notes.py
       '''
 
-      // 3⃣ Archive the notes with the build
+      /* 3⃣ Archive the notes with the build */
       archiveArtifacts artifacts: 'release-notes.md', fingerprint: true
 
-      /* 4⃣ (Optional) Publish to GitHub Releases
+      /* 4⃣ (Optional) Publish to GitHub Releases */
+      /*
       withCredentials([string(credentialsId: 'gh-token', variable: 'GH_TOKEN')]) {
         sh label: 'Publish GitHub Release', script: '''
           set -e
           tag=$(git describe --tags --abbrev=0 2>/dev/null || date +v%Y%m%d%H%M)
-          repo=$(git config --get remote.origin.url \
-                   | sed 's#.*github.com[:/]##;s/\.git$//')
+          repo=$(git config --get remote.origin.url | sed 's#.*github.com[:/]##;s/\\.git$//')
           gh release view "$tag" --repo "$repo" >/dev/null 2>&1 || \
           gh release create "$tag" --repo "$repo" --notes-file release-notes.md
         '''
