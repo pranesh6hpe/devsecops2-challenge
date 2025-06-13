@@ -105,3 +105,4 @@ This Jenkins pipeline is designed to:
    APP_NAME      = 'devsecops2-challenge'
    REGISTRY_HOST = '10.25.157.175:32030'
    IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
+5. **Done! The setup is ready to use**
