@@ -128,7 +128,7 @@ pipeline {
     }
 
     /* ───────────────────  AI RELEASE NOTES (GROQ)  ─────────────────── */
-   /* ──────────────────  AI RELEASE NOTES (Groq)  ────────────────── */
+ /* ──────────────────  AI RELEASE NOTES (Groq)  ────────────────── */
 stage('AI Release Notes') {
   when { expression { currentBuild.currentResult == 'SUCCESS' } }
 
@@ -139,17 +139,18 @@ stage('AI Release Notes') {
     ]) {
       // 1⃣ Collect only the delta since the last tag
       sh label: 'Gather Git delta', script: '''
-        set -eo pipefail
+        set -e  # pipefail not available in /bin/sh on some agents
         last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
         range="${last_tag:+$last_tag..}HEAD"
 
-        git log --format="%h %s (%an)" $range       > commits.txt
-        git diff --name-status        $range       > files.txt
-        git shortlog -sne             $range       > authors.txt
+        git log --format="%h %s (%an)" "$range"  > commits.txt
+        git diff --name-status        "$range"  > files.txt
+        git shortlog -sne             "$range"  > authors.txt
       '''
 
       // 2⃣ Ask Groq to build a richer changelog
       sh label: 'Generate AI release notes', script: '''
+        set -e
         python3 - <<'PY'
 import os, pathlib, textwrap, openai
 
@@ -161,37 +162,26 @@ client = openai.OpenAI(
 def read(fp):
     return pathlib.Path(fp).read_text().strip()
 
-commits   = read("commits.txt")
-files     = read("files.txt")
-authors   = read("authors.txt")
+commits = read("commits.txt")
+files   = read("files.txt")
+authors = read("authors.txt")
 
 SYSTEM = textwrap.dedent("""
-You are an expert technical writer generating developer-focused release notes.
+You are an expert technical writer generating developer‑focused release notes.
 Produce compact markdown containing:
-• A one-line summary (#commits, #files, #contributors).
+• A one‑line summary (#commits, #files, #contributors).
 • Categorised bullets (✨ Features, 🐛 Fixes, 🚀 Infra, 🔒 Security, 🧪 Tests).
-• A “Δ Files” block listing up to 10 most-touched paths.
-• Auto-link issue/PR refs like #123 (GitHub style).
+• A “Δ Files” block listing up to 10 most‑touched paths.
+• Auto‑link issue/PR refs like #123 (GitHub style).
 • Warn about any 'BREAKING CHANGE' lines or major version bumps.
-Limit to ~250 words.
+Limit to ~250 words.
 """)
 
 USER = f"""
-Commits:
-```
-{commits}
-```
-
-Files changed:
-```
-{files[:3000]}
-```
-
-Contributors:
-```
-{authors}
-```
-"""
+Commits:\n```
+{commits}\n```\n\nFiles changed:\n```
+{files[:3000]}\n```\n\nContributors:\n```
+{authors}\n```"""
 
 response = client.chat.completions.create(
     model="llama3-70b-8192",
@@ -214,9 +204,10 @@ PY
       /* 4⃣ (Optional) Publish to GitHub Releases
       withCredentials([string(credentialsId: 'gh-token', variable: 'GH_TOKEN')]) {
         sh label: 'Publish GitHub Release', script: '''
+          set -e
           tag=$(git describe --tags --abbrev=0 2>/dev/null || date +v%Y%m%d%H%M)
           repo=$(git config --get remote.origin.url \
-                   | sed 's#.*github.com[:/]##;s/\\.git$//')
+                   | sed 's#.*github.com[:/]##;s/\.git$//')
           gh release view "$tag" --repo "$repo" >/dev/null 2>&1 || \
           gh release create "$tag" --repo "$repo" --notes-file release-notes.md
         '''
