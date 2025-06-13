@@ -139,6 +139,7 @@ stage('AI Release Notes') {
       // , string(credentialsId: 'gh-token', variable: 'GH_TOKEN') // optional
     ]) {
 
+      /* 1⃣ Gather the Git delta since the last tag */
       sh label: 'Gather Git delta', script: '''
         set -e  # pipefail not available in /bin/sh on some agents
         last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -149,6 +150,7 @@ stage('AI Release Notes') {
         git shortlog -sne             "$range"  > authors.txt
       '''
 
+      /* 2⃣ Generate the AI‑driven release notes */
       sh label: 'Generate AI release notes', script: '''
         set -e
         cat > gen_notes.py << 'EOF'
@@ -177,7 +179,7 @@ USER = f"""Commits:\\n```\\n{commits}\\n```\\n\\nFiles changed:\\n```\\n{files[:
 
 response = client.chat.completions.create(
     model="llama3-70b-8192",
-    temperature=0.7,
+    temperature=0.2,
     messages=[
         {"role": "system", "content": SYSTEM},
         {"role": "user",   "content": USER}
@@ -191,9 +193,11 @@ EOF
         python3 gen_notes.py
       '''
 
+      /* 3⃣ Archive the notes with the build */
       archiveArtifacts artifacts: 'release-notes.md', fingerprint: true
 
-     
+      /* 4⃣ (Optional) Publish to GitHub Releases */
+      /*
       withCredentials([string(credentialsId: 'gh-token', variable: 'GH_TOKEN')]) {
         sh label: 'Publish GitHub Release', script: '''
           set -e
