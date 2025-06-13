@@ -130,7 +130,6 @@ pipeline {
         python3 - <<'PY'
 import subprocess, sys, os, pathlib, textwrap, time, random
 
-# Install required packages
 subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user", "openai>=1.13.3", "pyfiglet"], check=True)
 from pyfiglet import Figlet
 import openai
@@ -141,24 +140,20 @@ client = openai.OpenAI(
     api_key=os.environ["GROQ_API_KEY"]
 )
 
-# Show fancy banner
 banner = Figlet(font='slant').renderText('Release Notes')
 print(f"\\033[95m{banner}\\033[0m")  # Purple slanted title
 
-# Loading animation
 print("🤖 Generating AI Release Notes", end="", flush=True)
 for _ in range(5):
     time.sleep(0.4)
     print(".", end="", flush=True)
 print(" Done!\\n")
 
-# Fireworks!
 colors = [91, 92, 93, 94, 95, 96]
 for _ in range(12):
     print(f"\\033[{random.choice(colors)}m{'*' * random.randint(10, 50)}\\033[0m")
     time.sleep(0.05)
 
-# Read commits
 commits_path = pathlib.Path("commits.txt")
 if not commits_path.exists() or not commits_path.read_text().strip():
     print("No commits found – skipping AI release notes"); sys.exit(0)
