@@ -5,6 +5,10 @@ pipeline {
     APP_NAME      = 'devsecops2-challenge'
     REGISTRY_HOST = '10.25.157.175:32030'
     IMAGE_ROOT    = "${REGISTRY_HOST}/docker-hosted"
+    JENKINS_PUBLIC_URL  = 'http://10.25.157.175:32000'
+    DEFAULT_RECIPIENTS  = 'g-sai-roopesh@hpe.com'
+    
+
   }
 
   stages {
@@ -15,7 +19,14 @@ pipeline {
         git url: 'https://github.com/pranesh6hpe/devsecops2-challenge.git',
             branch: 'main',
             credentialsId: 'git-https'
+        script {
+      env.GIT_COMMITTER_EMAIL = sh(
+        script: "git --no-pager show -s --format='%ae' HEAD",
+        returnStdout: true
+      ).trim()
+    }
       }
+      
     }
 
     stage('Build & Test') {
@@ -248,24 +259,29 @@ PY
 
   /* ─────────────────────────  POST ACTIONS  ────────────────────────── */
   post {
-    always  { cleanWs() }
+  always { cleanWs() }
 
-    success {
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-        mail to: gitEmail,
-             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} ✓",
-             body:    "Build succeeded — see details at ${env.BUILD_URL}"
-      }
-    }
+  success {
+    script {
+      def recipients = env.GIT_COMMITTER_EMAIL ?: env.DEFAULT_RECIPIENTS
+      def buildUrl  = env.BUILD_URL.replaceFirst('http://[^/]+', env.JENKINS_PUBLIC_URL)
 
-    failure {
-      script {
-        def gitEmail = env.GIT_COMMITTER_EMAIL ?: 'default-team@example.com'
-        mail to: gitEmail,
-             subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} ✗",
-             body:    "Build failed — investigate console output:\n${env.BUILD_URL}"
-      }
+      mail to: recipients,
+           subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} ✓",
+           body:    "Build succeeded — see details at ${buildUrl}"
     }
   }
+
+  failure {
+    script {
+      def recipients = env.GIT_COMMITTER_EMAIL ?: env.DEFAULT_RECIPIENTS
+      def buildUrl  = env.BUILD_URL.replaceFirst('http://[^/]+', env.JENKINS_PUBLIC_URL)
+
+      mail to: recipients,
+           subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} ✗",
+           body:    "Build failed — investigate console output:\n${buildUrl}"
+    }
+  }
+}
+
 }
