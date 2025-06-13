@@ -128,93 +128,100 @@ pipeline {
     }
 
     /* ───────────────────  AI RELEASE NOTES (GROQ)  ─────────────────── */
-    stage('AI Release Notes (Groq)') {
+   /* ──────────────────  AI RELEASE NOTES (Groq)  ────────────────── */
+stage('AI Release Notes') {
   when { expression { currentBuild.currentResult == 'SUCCESS' } }
+
   steps {
-    withCredentials([string(credentialsId: 'groq-key', variable: 'GROQ_API_KEY')]) {
-      sh '''
-        set -e
+    withCredentials([
+      string(credentialsId: 'groq-key', variable: 'GROQ_API_KEY')
+      // , string(credentialsId: 'gh-token',  variable: 'GH_TOKEN')  // optional
+    ]) {
+      // 1⃣ Collect only the delta since the last tag
+      sh label: 'Gather Git delta', script: '''
+        set -eo pipefail
+        last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        range="${last_tag:+$last_tag..}HEAD"
 
-        # Get last 200 commit messages
-        git --no-pager log -n 200 --pretty=format:"%h %<(72,trunc)%s" > commits.txt
+        git log --format="%h %s (%an)" $range       > commits.txt
+        git diff --name-status        $range       > files.txt
+        git shortlog -sne             $range       > authors.txt
+      '''
 
+      // 2⃣ Ask Groq to build a richer changelog
+      sh label: 'Generate AI release notes', script: '''
         python3 - <<'PY'
-import subprocess, sys, os, pathlib, textwrap, time, random
+import os, pathlib, textwrap, openai
 
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--user", "openai>=1.13.3", "pyfiglet"], check=True)
-from pyfiglet import Figlet
-import openai
-
-# Setup Groq client
 client = openai.OpenAI(
     base_url="https://api.groq.com/openai/v1",
     api_key=os.environ["GROQ_API_KEY"]
 )
 
-banner = Figlet(font='slant').renderText('Release Notes')
-print(f"\\033[95m{banner}\\033[0m")  # Purple slanted title
+def read(fp):
+    return pathlib.Path(fp).read_text().strip()
 
-print("🤖 Generating AI Release Notes", end="", flush=True)
-for _ in range(5):
-    time.sleep(0.4)
-    print(".", end="", flush=True)
-print(" Done!\\n")
+commits   = read("commits.txt")
+files     = read("files.txt")
+authors   = read("authors.txt")
 
-colors = [91, 92, 93, 94, 95, 96]
-for _ in range(12):
-    print(f"\\033[{random.choice(colors)}m{'*' * random.randint(10, 50)}\\033[0m")
-    time.sleep(0.05)
+SYSTEM = textwrap.dedent("""
+You are an expert technical writer generating developer-focused release notes.
+Produce compact markdown containing:
+• A one-line summary (#commits, #files, #contributors).
+• Categorised bullets (✨ Features, 🐛 Fixes, 🚀 Infra, 🔒 Security, 🧪 Tests).
+• A “Δ Files” block listing up to 10 most-touched paths.
+• Auto-link issue/PR refs like #123 (GitHub style).
+• Warn about any 'BREAKING CHANGE' lines or major version bumps.
+Limit to ~250 words.
+""")
 
-commits_path = pathlib.Path("commits.txt")
-if not commits_path.exists() or not commits_path.read_text().strip():
-    print("No commits found – skipping AI release notes"); sys.exit(0)
+USER = f"""
+Commits:
+```
+{commits}
+```
 
-commits = commits_path.read_text()
-SYSTEM = textwrap.dedent(\"\"\"\
-You are an expert technical writer and changelog specialist.
-Your job is to generate *developer-focused release notes* based on Git commit messages.
-Write a markdown changelog grouped by category such as:
+Files changed:
+```
+{files[:3000]}
+```
 
-### 🎉 Features
-- ...
-### 🐞 Fixes
-- ...
-### 🚀 Infra / CI
-- ...
-### 🔒 Security
-- ...
-### 🧪 Tests
-- ...
+Contributors:
+```
+{authors}
+```
+"""
 
-Avoid "misc" or "chore" unless absolutely necessary. Exclude commits like "merge", "fix typo", or "update README".
-
-Requirements:
-- Prioritize technical clarity and usefulness.
-- Mention file names or modules where possible.
-- Combine related commits.
-- Highlight security, performance, or deployment changes.
-- Use bullet points. Limit to ~200 words.
-\"\"\")
-
-USER = f"Git commits since last release:\\n```\\n{commits}\\n```"
-
-resp = client.chat.completions.create(
+response = client.chat.completions.create(
     model="llama3-70b-8192",
-    temperature=0.3,
+    temperature=0.2,
     messages=[
         {"role": "system", "content": SYSTEM},
         {"role": "user",   "content": USER}
     ]
 )
 
-notes = resp.choices[0].message.content.strip()
-
-print("\\n\\033[92m===== 🎊 AI-Generated Release Notes 🎊 =====\\033[0m\\n")
+notes = response.choices[0].message.content.strip()
+pathlib.Path("release-notes.md").write_text(notes + "\n")
 print(notes)
-pathlib.Path("release-notes.md").write_text(notes + "\\n")
 PY
       '''
+
+      // 3⃣ Archive the notes with the build
       archiveArtifacts artifacts: 'release-notes.md', fingerprint: true
+
+      /* 4⃣ (Optional) Publish to GitHub Releases
+      withCredentials([string(credentialsId: 'gh-token', variable: 'GH_TOKEN')]) {
+        sh label: 'Publish GitHub Release', script: '''
+          tag=$(git describe --tags --abbrev=0 2>/dev/null || date +v%Y%m%d%H%M)
+          repo=$(git config --get remote.origin.url \
+                   | sed 's#.*github.com[:/]##;s/\\.git$//')
+          gh release view "$tag" --repo "$repo" >/dev/null 2>&1 || \
+          gh release create "$tag" --repo "$repo" --notes-file release-notes.md
+        '''
+      }
+      */
     }
   }
 }
