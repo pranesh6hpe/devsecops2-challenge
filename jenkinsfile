@@ -179,7 +179,7 @@ USER = f"""Commits:\\n```\\n{commits}\\n```\\n\\nFiles changed:\\n```\\n{files[:
 
 response = client.chat.completions.create(
     model="llama3-70b-8192",
-    temperature=1,
+    temperature=0.2,
     messages=[
         {"role": "system", "content": SYSTEM},
         {"role": "user",   "content": USER}
