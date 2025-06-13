@@ -227,7 +227,7 @@ public class HelloServer {
 </head>
 <body>
   <div class="card">
-    <h2>🌤️ Weather Hello</h2>
+    <h2>🌤️ Weather Now</h2>
     <input type="text" id="city" class="city-input" placeholder="Enter city e.g. Paris">
     <button onclick="getWeather()">Get Weather</button>
     <div id="output" class="result"></div>
