@@ -166,6 +166,7 @@ commits, files, authors = map(read, ("commits.txt", "files.txt", "authors.txt"))
 
 SYSTEM = textwrap.dedent("""
 You are an expert technical writer generating developer‑focused release notes.
+Ensure to have the corresponding commit-id's mentioned.
 Produce compact markdown containing:
 • A one‑line summary (#commits, #files, #contributors).
 • Categorised bullets (✨ Features, 🐛 Fixes, 🚀 Infra, 🔒 Security, 🧪 Tests).
