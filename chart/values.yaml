@@ -6,7 +6,7 @@ replicaCount: 1
 
 image:
   repository: 10.25.157.175:32030/docker-hosted/devsecops2-challenge
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   tag: latest
 
