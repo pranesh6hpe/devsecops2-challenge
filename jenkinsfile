@@ -217,6 +217,7 @@ EOF
     /* ───────────────────────────  DEPLOY DEV  ───────────────────────── */
     stage('Deploy to DEV') {
       steps {
+         dir('devsecops2-challenge/chart'){
         sh '''
           echo "  Deploying $APP_NAME:${IMAGE_TAG} to dev"
           helm upgrade --install "$APP_NAME" chart \
@@ -228,6 +229,7 @@ EOF
             --set service.nodePort=32007
         '''
       }
+}
     }
 
     /* ────────────────  MANUAL APPROVAL & PROD DEPLOY  ──────────────── */
@@ -237,7 +239,7 @@ EOF
 
     stage('Deploy to PROD') {
       steps {
-        dir('devsecops2-challenge/chart/Chart.yaml'){
+        dir('devsecops2-challenge/chart'){
         sh '''
           echo " Deploying $APP_NAME:${IMAGE_TAG} to prod"
           helm upgrade --install "$APP_NAME" chart \
