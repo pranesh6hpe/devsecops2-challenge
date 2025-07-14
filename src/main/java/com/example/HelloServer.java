@@ -78,7 +78,7 @@ public class HelloServer {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Weather Now</title>
+  <title>Weather Here</title>
   <style>
     :root {
       --bg-start: #1e3c72;
