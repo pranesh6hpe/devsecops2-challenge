@@ -78,7 +78,7 @@ public class HelloServer {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Banking Application</title>
+  <title>Banking App</title>
   <style>
     :root {
       --bg-start: #1e3c72;
